@@ -18,6 +18,7 @@ const regularizationRoutes = require('./routes/regularizationRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const adminRoutes = require('./routes/adminRoutes')
+const auditRoutes = require('./routes/auditRoutes')
 
 const app = express();
 
@@ -95,7 +96,7 @@ app.use(`${BASE_API_PATH}/regularization`, regularizationRoutes);
 app.use(`${BASE_API_PATH}/payroll`, payrollRoutes);
 app.use(`${BASE_API_PATH}/settings`, settingsRoutes);
 app.use(`${BASE_API_PATH}/admin`, adminRoutes)
-
+app.use(`${BASE_API_PATH}/audit`, auditRoutes)
 // =====================
 // 404 Handler
 // =====================
