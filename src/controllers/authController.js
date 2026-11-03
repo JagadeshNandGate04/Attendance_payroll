@@ -327,6 +327,68 @@ async function resetPassword(req, res) {
 }
 
 
+// ADMIN CHANGE PASSWORD
+
+async function adminChangePassword(req, res) {
+  try {
+    const { old_password, new_password } = req.body;
+
+    // adminAuthorize middleware provides the logged-in admin
+    const userId = req.user.id;
+
+    const result = await authService.changePassword({
+      userId,
+      oldPassword: old_password,
+      newPassword: new_password,
+    });
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    console.error('Admin change password error:', error);
+
+    if (error.message === 'Old password and new password are required') {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    if (error.message === 'New password must be different from old password') {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    if (error.message === 'The old password does not match your current password') {
+      return res.status(401).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    if (error.message === 'User not found') {
+      return res.status(404).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    if (error.message === 'Account is inactive. Please contact admin.') {
+      return res.status(401).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error during password change',
+    });
+  }
+}
+
 
 module.exports = {
   login,
@@ -336,6 +398,6 @@ module.exports = {
   forgotPassword,
   verifyResetOtp,
   resetPassword,
-
+  adminChangePassword
 
 };

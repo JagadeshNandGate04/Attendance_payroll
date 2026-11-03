@@ -606,6 +606,61 @@ async function resetPassword({
 }
 
 
+// ADMIN CHANGE PASSWORD
+
+async function adminChangePassword({ userId, oldPassword, newPassword }) {
+  // Same validation as changePassword
+  if (!oldPassword || !newPassword) {
+    throw new Error('Old password and new password are required');
+  }
+
+  if (oldPassword === newPassword) {
+    throw new Error('New password must be different from old password');
+  }
+
+  const user = await knex('users').where({ id: userId }).first();
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  // Extra guard: only admins can use this service
+  if (user.role !== 'ADMIN') {
+    throw new Error('Only admin accounts can use this endpoint');
+  }
+
+  if (user.status !== 'ACTIVE') {
+    throw new Error('Account is inactive. Please contact admin.');
+  }
+
+  const validPassword = await bcrypt.compare(oldPassword, user.password_hash);
+  if (!validPassword) {
+    throw new Error('The old password does not match your current password');
+  }
+
+  const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+  await knex.transaction(async (trx) => {
+    await trx('users')
+      .where({ id: userId })
+      .update({
+        password_hash: newPasswordHash,
+        updated_at: trx.fn.now(),
+      });
+
+    // await trx('audit_log').insert({
+    //   user_id: userId,
+    //   action: 'ADMIN_CHANGE_PASSWORD',
+    //   created_at: trx.fn.now(),
+    // });
+  });
+
+  return {
+    success: true,
+    message: 'Password changed successfully',
+  };
+}
+
 module.exports = {
   login,
   refreshToken,
@@ -613,5 +668,6 @@ module.exports = {
   saveFcmToken,
   forgotPassword,
   verifyResetOtp,
-  resetPassword
+  resetPassword,
+  adminChangePassword
 };

@@ -1,9 +1,7 @@
 const auditLogService = require("../services/auditLogService");
 
-/**
- * GET /audit-logs
- * List audit logs.
- */
+// GET AUDIT LOGS
+
 async function getAuditLogs(req, res) {
   try {
     const {
@@ -77,10 +75,10 @@ async function getAuditLogs(req, res) {
   }
 }
 
-/**
- * GET /audit-logs/:id
- * Get audit log details.
- */
+
+
+// FETCH AUDIT LOG BY ID
+
 async function getAuditLogById(req, res) {
   try {
     const { id } = req.params;

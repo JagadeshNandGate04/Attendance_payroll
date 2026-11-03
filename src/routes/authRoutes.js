@@ -5,6 +5,8 @@ const {
 } = require('../middleware/auth');
 
 const authController = require('../controllers/authController');
+const adminAuthorize =
+  require('../middleware/admin').adminAuthorize;
 
 router.post('/login', authController.login);
 router.post('/refresh', authController.refreshToken);
@@ -13,5 +15,10 @@ router.post('/fcm-token', userAuthorize(), authController.saveFcmToken);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/verify-reset-otp', authController.verifyResetOtp);
 router.post('/reset-password', authController.resetPassword);
+router.post(
+  '/admin/changepassword',
+  adminAuthorize(),
+  authController.adminChangePassword
+);
 
 module.exports = router;

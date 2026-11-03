@@ -41,9 +41,6 @@ function sanitizeAuditData(value) {
   return value;
 }
 
-/**
- * Apply filters to the audit log query.
- */
 function applyFilters(query, filters) {
   const {
     action,
@@ -79,10 +76,8 @@ function applyFilters(query, filters) {
   return query;
 }
 
-/**
- * GET /audit-logs
- * List audit logs with pagination and filters.
- */
+// GET AUDIT LOGS 
+
 async function getAuditLogs(filters = {}) {
   const page = Math.max(parseInt(filters.page, 10) || 1, 1);
   const limit = Math.min(
@@ -146,10 +141,8 @@ async function getAuditLogs(filters = {}) {
   };
 }
 
-/**
- * GET /audit-logs/:id
- * Get a single audit log.
- */
+// FETCH AUDIT LOG BY ID 
+
 async function getAuditLogById(id) {
   const log = await db("audit_log as al")
     .leftJoin("users as u", "u.id", "al.actor_id")
