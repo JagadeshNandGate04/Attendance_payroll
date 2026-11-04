@@ -210,6 +210,87 @@ async function saveFcmToken(req, res) {
   }
 }
 
+// ==========================================
+// REMOVE FCM TOKEN
+// ==========================================
+
+async function removeFcmToken(req, res) {
+  try {
+    const userId = req.user.id;
+    const { token } = req.body;
+
+    if (!token || typeof token !== "string" || !token.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "FCM token is required."
+      });
+    }
+
+    const result = await authService.removeFcmToken(
+      userId,
+      token.trim()
+    );
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    console.error("Remove FCM token error:", error);
+
+    if (error.message === "User not found") {
+      return res.status(404).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to remove FCM token."
+    });
+  }
+}
+
+
+// ==========================================
+// LOGOUT
+// ==========================================
+
+async function logout(req, res) {
+  try {
+    const userId = req.user.id;
+    const { fcm_token } = req.body || {};
+
+    const result = await authService.logout({
+      userId,
+      fcmToken: fcm_token
+    });
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    console.error("Logout error:", error);
+
+    if (error.message === "FCM token is required.") {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    if (error.message === "User not found") {
+      return res.status(404).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to logout. Please try again."
+    });
+  }
+}
+
 
 // FORGOT PASSWORD - SEND OTP
 
@@ -395,9 +476,10 @@ module.exports = {
   refreshToken,
   changePassword,
   saveFcmToken,
+  removeFcmToken,
+  logout,
   forgotPassword,
   verifyResetOtp,
   resetPassword,
   adminChangePassword
-
 };

@@ -1,12 +1,20 @@
 const regularizationService = require("../services/RegularizationService");
 
-// APPLY REGULARIZATION
+// =====================================================
+// EMPLOYEE - APPLY REGULARIZATION
+// =====================================================
 
 async function applyMyRegularization(req, res) {
   try {
     const userId = req.user.id;
 
-    const { work_date, type, claimed_in, claimed_out, reason } = req.body;
+    const {
+      work_date,
+      type,
+      claimed_in,
+      claimed_out,
+      reason,
+    } = req.body;
 
     const result = await regularizationService.applyMyRegularization({
       userId,
@@ -18,6 +26,7 @@ async function applyMyRegularization(req, res) {
     });
 
     return res.status(201).json(result);
+
   } catch (error) {
     console.error("Apply regularization error:", error);
 
@@ -58,7 +67,9 @@ async function applyMyRegularization(req, res) {
   }
 }
 
-// GET MY REGULARIZATION REQUESTS
+// =====================================================
+// EMPLOYEE - GET MY REGULARIZATION REQUESTS
+// =====================================================
 
 async function getMyRegularizations(req, res) {
   try {
@@ -73,10 +84,14 @@ async function getMyRegularizations(req, res) {
     });
 
     return res.status(200).json(result);
+
   } catch (error) {
     console.error("Get my regularizations error:", error);
 
-    if (error.code === "INVALID_MONTH" || error.code === "INVALID_YEAR") {
+    if (
+      error.code === "INVALID_MONTH" ||
+      error.code === "INVALID_YEAR"
+    ) {
       return res.status(400).json({
         success: false,
         error: error.code,
@@ -91,17 +106,21 @@ async function getMyRegularizations(req, res) {
   }
 }
 
-// ADMIN GET REGULARIZATION REQUESTS
+// =====================================================
+// ADMIN - GET REGULARIZATION REQUESTS
+// =====================================================
 
 async function getAdminRegularizationRequests(req, res) {
   try {
     const { status } = req.query;
 
-    const result = await regularizationService.getAdminRegularizationRequests({
-      status,
-    });
+    const result =
+      await regularizationService.getAdminRegularizationRequests({
+        status,
+      });
 
     return res.status(200).json(result);
+
   } catch (error) {
     console.error("Get admin regularization requests error:", error);
 
@@ -120,7 +139,9 @@ async function getAdminRegularizationRequests(req, res) {
   }
 }
 
-// ADMIN DECIDE REGULARIZATION
+// =====================================================
+// ADMIN - APPROVE / REJECT REGULARIZATION
+// =====================================================
 
 async function decideAdminRegularization(req, res) {
   try {
@@ -130,14 +151,16 @@ async function decideAdminRegularization(req, res) {
 
     const { action, note } = req.body;
 
-    const result = await regularizationService.decideAdminRegularization({
-      adminId,
-      regularizationRequestId,
-      action,
-      note,
-    });
+    const result =
+      await regularizationService.decideAdminRegularization({
+        adminId,
+        regularizationRequestId,
+        action,
+        note,
+      });
 
     return res.status(200).json(result);
+
   } catch (error) {
     console.error("Admin decide regularization error:", error);
 
@@ -148,7 +171,9 @@ async function decideAdminRegularization(req, res) {
       error.code === "REGULARIZATION_NOT_FOUND"
     ) {
       return res
-        .status(error.code === "REGULARIZATION_NOT_FOUND" ? 404 : 400)
+        .status(
+          error.code === "REGULARIZATION_NOT_FOUND" ? 404 : 400
+        )
         .json({
           success: false,
           error: error.code,
@@ -184,6 +209,10 @@ async function decideAdminRegularization(req, res) {
     });
   }
 }
+
+// =====================================================
+// EXPORTS
+// =====================================================
 
 module.exports = {
   applyMyRegularization,

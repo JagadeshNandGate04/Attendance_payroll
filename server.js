@@ -1,9 +1,23 @@
+
 require('dotenv').config();
 
 const app = require('./src/app');
 
+const knex = require('./src/config/database');
+
+const {
+  startNotificationPushWorker,
+} = require('./src/workers/notificationPushWorker');
+
 const PORT = process.env.PORT || 5001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+
+let stopPushWorker = null;
+let isShuttingDown = false;
+
+// =====================================================
+// START EXPRESS SERVER
+// =====================================================
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('\n===========================================');
@@ -15,24 +29,61 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Network     : http://0.0.0.0:${PORT}`);
   console.log('Server is running...');
   console.log('===========================================\n');
+
+  // Start notification push worker
+  stopPushWorker = startNotificationPushWorker();
 });
 
 server.on('error', (error) => {
   console.error('Server startup error:', error);
 });
 
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Closing server...');
-  server.close(() => {
-    console.log('HTTP Server Closed');
-    process.exit(0);
-  });
-});
+// =====================================================
+// GRACEFUL SHUTDOWN
+// =====================================================
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received. Closing server...');
-  server.close(() => {
+async function shutdown(signal) {
+  if (isShuttingDown) return;
+
+  isShuttingDown = true;
+
+  console.log(`${signal} received. Closing server...`);
+
+  try {
+    // Close HTTP server
+    await new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+
     console.log('HTTP Server Closed');
+
+    // Stop notification worker
+    if (stopPushWorker) {
+      await stopPushWorker();
+    }
+
+    console.log('Notification Push Worker Closed');
+
+    // Close database connection
+    await knex.destroy();
+
+    console.log('Database Connection Closed');
+
     process.exit(0);
-  });
-});
+
+  } catch (error) {
+    console.error('Shutdown error:', error);
+    process.exit(1);
+  }
+}
+
+// =====================================================
+// PROCESS SIGNALS
+// =====================================================
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+process.on('SIGINT', () => shutdown('SIGINT'));

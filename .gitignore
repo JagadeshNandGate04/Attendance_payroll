@@ -78,6 +78,15 @@ web_modules/
 .next
 out
 
+# Firebase credentials
+serviceAccountKey.json
+
+# Generated payslips
+uploads/payslips/
+
+# Temporary Firebase testing
+testFirebase.js
+
 # Nuxt.js build / generate output
 .nuxt
 dist

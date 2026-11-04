@@ -55,7 +55,11 @@ async function login({ email, password }) {
       }
     );
 
-    const { password_hash, ...userData } = user;
+   const {
+  password_hash,
+  fcm_tokens,
+  ...userData
+} = user;
 
     return {
       success: true,
@@ -239,71 +243,143 @@ async function changePassword({
 
 // FCM TOKEN:
 
+// ==========================================
+// FCM TOKEN REGISTRATION
+// ==========================================
+
 async function saveFcmToken(userId, token) {
-  const user = await knex('users')
-    .select('id', 'fcm_tokens')
-    .where({ id: userId })
-    .first();
+  return knex.transaction(async (trx) => {
+    const user = await trx("users")
+      .select("id", "fcm_tokens")
+      .where({ id: userId })
+      .forUpdate()
+      .first();
 
-  if (!user) {
-    return {
-      success: false,
-      message: 'User not found.'
-    };
-  }
+    if (!user) {
+      throw new Error("User not found");
+    }
 
-  let tokens = [];
+    let tokens = [];
 
-  if (Array.isArray(user.fcm_tokens)) {
-    tokens = user.fcm_tokens;
-  } else if (typeof user.fcm_tokens === 'string') {
-    try {
-      tokens = JSON.parse(user.fcm_tokens);
-    } catch (error) {
+    if (Array.isArray(user.fcm_tokens)) {
+      tokens = user.fcm_tokens;
+    } else if (typeof user.fcm_tokens === "string") {
+      try {
+        tokens = JSON.parse(user.fcm_tokens);
+      } catch {
+        tokens = [];
+      }
+    }
+
+    if (!Array.isArray(tokens)) {
       tokens = [];
     }
-  }
 
-  // Make sure tokens is actually an array
-  if (!Array.isArray(tokens)) {
-    tokens = [];
-  }
+    tokens = [...new Set(tokens.filter(
+      (item) => typeof item === "string" && item.trim()
+    ))];
 
-  // Remove duplicates
-  tokens = [...new Set(tokens)];
+    if (tokens.includes(token)) {
+      return {
+        success: true,
+        message: "FCM token already registered."
+      };
+    }
 
-  // Token already exists
-  if (tokens.includes(token)) {
+    tokens.push(token);
+
+    await trx("users")
+      .where({ id: userId })
+      .update({
+        fcm_tokens: JSON.stringify(tokens),
+        updated_at: trx.fn.now()
+      });
+
     return {
       success: true,
-      message: 'FCM token already registered.'
+      message: "FCM token registered successfully."
     };
+  });
+}
+
+
+// ==========================================
+// REMOVE FCM TOKEN
+// ==========================================
+
+async function removeFcmToken(userId, token) {
+  if (!token || typeof token !== "string" || !token.trim()) {
+    throw new Error("FCM token is required.");
   }
 
-  // Add new token
-  tokens.push(token);
+  const normalizedToken = token.trim();
 
-  // Update user
-  const updatedRows = await knex('users')
-    .where({ id: userId })
-    .update({
-      fcm_tokens: JSON.stringify(tokens)
-    });
+  return knex.transaction(async (trx) => {
+    const user = await trx("users")
+      .select("id", "fcm_tokens")
+      .where({ id: userId })
+      .forUpdate()
+      .first();
 
-  // Make sure the user was actually updated
-  if (updatedRows !== 1) {
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    let tokens = [];
+
+    if (Array.isArray(user.fcm_tokens)) {
+      tokens = user.fcm_tokens;
+    } else if (typeof user.fcm_tokens === "string") {
+      try {
+        tokens = JSON.parse(user.fcm_tokens);
+      } catch {
+        tokens = [];
+      }
+    }
+
+    if (!Array.isArray(tokens)) {
+      tokens = [];
+    }
+
+    const updatedTokens = tokens.filter(
+      (item) => item !== normalizedToken
+    );
+
+    await trx("users")
+      .where({ id: userId })
+      .update({
+        fcm_tokens: JSON.stringify(updatedTokens),
+        updated_at: trx.fn.now()
+      });
+
     return {
-      success: false,
-      message: 'Failed to update FCM token.'
+      success: true,
+      message: "FCM token removed successfully."
     };
+  });
+}
+
+
+// ==========================================
+// LOGOUT
+// ==========================================
+
+async function logout({ userId, fcmToken }) {
+  if (!userId) {
+    throw new Error("User ID is required.");
+  }
+
+  // Remove only the current device's FCM token.
+  // If no token is provided, do not remove other devices.
+  if (fcmToken) {
+    await removeFcmToken(userId, fcmToken);
   }
 
   return {
     success: true,
-    message: 'FCM token registered successfully.'
+    message: "Logged out successfully."
   };
 }
-
 
 // FORGOT PASSWORD - REQUEST OTP
 
@@ -666,6 +742,8 @@ module.exports = {
   refreshToken,
   changePassword,
   saveFcmToken,
+  removeFcmToken,
+  logout,
   forgotPassword,
   verifyResetOtp,
   resetPassword,

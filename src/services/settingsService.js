@@ -412,24 +412,29 @@ async function getActiveEmployees(trx) {
     .orderBy("id", "asc");
 }
 
+
 // GET HOLIDAYS
 
 async function getHolidays({ year }) {
   const numericYear = validateYear(year);
 
   const holidays = await knex("holidays")
-    .select("id", "holiday_date", "name", "year", "created_at", "updated_at")
+    .select(
+      "id",
+      knex.raw("holiday_date::text as holiday_date"),
+      "name",
+      "year",
+      "created_at",
+      "updated_at"
+    )
     .where("year", numericYear)
     .orderBy("holiday_date", "asc");
 
   return {
     success: true,
-
     message: "Holidays fetched successfully",
-
     data: {
       year: numericYear,
-
       holidays,
     },
   };
@@ -563,19 +568,18 @@ async function createHoliday({ adminId, holiday_date, name }) {
     // RESPONSE
     // ----------------------------------------
 
-    return {
-      success: true,
-
-      message: "Holiday added successfully",
-
-      data: {
-        holiday,
-
-        affected_users: employees.length,
-
-        audit_id: audit.id,
-      },
-    };
+ return {
+  success: true,
+  message: "Holiday added successfully",
+  data: {
+    holiday: {
+      ...holiday,
+      holiday_date: holidayDate,
+    },
+    affected_users: employees.length,
+    audit_id: audit.id,
+  },
+};
   });
 }
 

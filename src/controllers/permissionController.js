@@ -1,6 +1,9 @@
+
 const permissionService = require("../services/PermissionService");
 
-//  GET MY PERMISSION BALANCE
+// ==========================================================
+// GET MY PERMISSION BALANCE
+// ==========================================================
 
 async function getMyPermissionBalance(req, res) {
   try {
@@ -18,7 +21,10 @@ async function getMyPermissionBalance(req, res) {
   } catch (error) {
     console.error("Get permission balance error:", error);
 
-    if (error.code === "INVALID_MONTH" || error.code === "INVALID_YEAR") {
+    if (
+      error.code === "INVALID_MONTH" ||
+      error.code === "INVALID_YEAR"
+    ) {
       return res.status(400).json({
         success: false,
         error: error.code,
@@ -33,13 +39,20 @@ async function getMyPermissionBalance(req, res) {
   }
 }
 
-//  APPLY PERMISSION
+// ==========================================================
+// APPLY PERMISSION
+// ==========================================================
 
 async function applyMyPermission(req, res) {
   try {
     const userId = req.user.id;
 
-    const { perm_date, start_time, minutes, reason } = req.body;
+    const {
+      perm_date,
+      start_time,
+      minutes,
+      reason,
+    } = req.body;
 
     const result = await permissionService.applyMyPermission({
       userId,
@@ -68,7 +81,6 @@ async function applyMyPermission(req, res) {
         ...(error.availableMinutes !== undefined && {
           data: {
             available_minutes: error.availableMinutes,
-
             requested_minutes: error.requestedMinutes,
           },
         }),
@@ -82,7 +94,9 @@ async function applyMyPermission(req, res) {
   }
 }
 
+// ==========================================================
 // CANCEL PERMISSION
+// ==========================================================
 
 async function cancelMyPermission(req, res) {
   try {
@@ -126,7 +140,9 @@ async function cancelMyPermission(req, res) {
   }
 }
 
+// ==========================================================
 // ADMIN DECIDE PERMISSION
+// ==========================================================
 
 async function decideAdminPermission(req, res) {
   try {
@@ -191,7 +207,9 @@ async function decideAdminPermission(req, res) {
   }
 }
 
-// GET PERMISSION REQUESTS BY ADMIN
+// ==========================================================
+// GET ADMIN PERMISSION REQUESTS
+// ==========================================================
 
 async function getAdminPermissionRequests(req, res) {
   try {
@@ -209,9 +227,7 @@ async function getAdminPermissionRequests(req, res) {
       });
 
     return res.status(200).json(result);
-
   } catch (error) {
-
     console.error(
       "Get admin permission requests error:",
       error
@@ -242,5 +258,5 @@ module.exports = {
   applyMyPermission,
   cancelMyPermission,
   decideAdminPermission,
-  getAdminPermissionRequests
+  getAdminPermissionRequests,
 };
