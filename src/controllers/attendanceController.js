@@ -1,5 +1,5 @@
 const attendanceService =
-  require('../services/attendanceService');
+  require('../services/AttendanceService');
 
 
 
@@ -396,11 +396,59 @@ async function voidAttendanceCorrection(req, res) {
   }
 }
 
+
+// ADMIN - ADJUST ATTENDANCE LOP
+
+async function adjustAttendanceLop(req, res) {
+  try {
+    const {
+      user_id,
+      work_date,
+      new_lop,
+      reason,
+    } = req.body;
+
+    const actorId = req.user.id;
+
+    const result = await attendanceService.adjustAttendanceLop({
+      actorId,
+      userId: user_id,
+      workDate: work_date,
+      newLop: new_lop,
+      reason,
+    });
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    console.error("Adjust attendance LOP error:", error);
+
+    const statusCode =
+      error.message === "Employee not found" ||
+      error.message === "Attendance summary not found for this date" ||
+      error.message === "Admin user not found"
+        ? 404
+        : error.message === "MONTH_LOCKED" ||
+          error.message === "LOP adjustment is allowed only for ABSENT days" ||
+          error.message === "New LOP is the same as the current LOP"
+          ? 409
+          : 400;
+
+    return res.status(statusCode).json({
+      success: false,
+      error: error.message,
+      message: "Unable to adjust attendance LOP",
+      data: null,
+    });
+  }
+}
+
 module.exports = {
   getMyAttendance,
   getMyAttendanceDay,
   getAdminDailyAttendance,
   getAdminMonthlyAttendance,
   addAttendanceCorrection,
-  voidAttendanceCorrection
+  voidAttendanceCorrection,
+  adjustAttendanceLop
 };

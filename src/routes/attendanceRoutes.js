@@ -49,4 +49,11 @@ router.post(
 );
 
 
+router.post(
+  "/admin/lop-adjustment",
+  adminAuthorize(),
+  attendanceController.adjustAttendanceLop
+);
+
+
 module.exports = router;

@@ -32,6 +32,88 @@ async function notifyUser(trx, {
   });
 }
 
+
+// =====================================================
+// HELPER - GET FINAL EMPLOYEE LOP FOR PAYROLL
+// =====================================================
+
+async function getFinalEmployeeLopDays({
+  trx,
+  userId,
+  year,
+  month,
+}) {
+  const monthStart =
+    `${year}-${String(month).padStart(2, "0")}-01`;
+
+  // First day of the following month (exclusive).
+  const nextMonthDate = new Date(
+    Date.UTC(year, month, 1)
+  );
+
+  const endExclusive = nextMonthDate
+    .toISOString()
+    .slice(0, 10);
+
+  // GET ATTENDANCE SUMMARIES
+  const daySummaries = await trx("day_summaries")
+    .select("status", "lop_value")
+    .select(
+      trx.raw("work_date::text AS work_date")
+    )
+    .where("user_id", userId)
+    .where("work_date", ">=", monthStart)
+    .where("work_date", "<", endExclusive);
+
+  // GET LATEST ADJUSTMENT FOR EACH DATE
+  const adjustments = await trx("attendance_lop_adjustments")
+    .select("new_lop")
+    .select(
+      trx.raw("work_date::text AS work_date")
+    )
+    .where("user_id", userId)
+    .where("work_date", ">=", monthStart)
+    .where("work_date", "<", endExclusive)
+    .orderBy("id", "desc");
+
+  const adjustmentMap = new Map();
+
+  // Because results are ordered by descending ID,
+  // the first record for each date is the latest.
+  for (const adjustment of adjustments) {
+    const date = String(adjustment.work_date).slice(0, 10);
+
+    if (!adjustmentMap.has(date)) {
+      adjustmentMap.set(date, adjustment);
+    }
+  }
+
+  let lopDays = 0;
+
+  for (const day of daySummaries) {
+    const date = String(day.work_date).slice(0, 10);
+
+    const calculatedLop = Number(day.lop_value || 0);
+
+    const adjustment = adjustmentMap.get(date);
+
+    let finalLop = calculatedLop;
+
+    // Apply adjustment ONLY to ABSENT attendance.
+    if (
+      day.status === "ABSENT" &&
+      adjustment
+    ) {
+      finalLop = Number(adjustment.new_lop);
+    }
+
+    lopDays += finalLop;
+  }
+
+  return Number(lopDays.toFixed(2));
+}
+
+
 // CREATE PAYROLL RUN
 
 async function createPayrollRun({ adminId, month, year }) {
@@ -59,6 +141,8 @@ async function createPayrollRun({ adminId, month, year }) {
     error.code = "INVALID_YEAR";
     throw error;
   }
+
+  // CHECK EXISTING PAYROLL RUN
 
   const existingRun = await knex("payroll_runs")
     .where({
@@ -104,6 +188,19 @@ async function createPayrollRun({ adminId, month, year }) {
       `Previous month payroll run ${previousMonth}/${previousYear} is not finalized`;
   }
 
+  // MONTH DATE RANGE
+
+  const monthStart =
+    `${yearNumber}-${String(monthNumber).padStart(2, "0")}-01`;
+
+  const monthEndDate = new Date(
+    Date.UTC(yearNumber, monthNumber, 0)
+  );
+
+  const monthEnd = monthEndDate
+    .toISOString()
+    .slice(0, 10);
+
   // TRANSACTION
 
   return await knex.transaction(async (trx) => {
@@ -134,17 +231,6 @@ async function createPayrollRun({ adminId, month, year }) {
 
     for (const user of users) {
 
-      const monthStart =
-        `${yearNumber}-${String(monthNumber).padStart(2, "0")}-01`;
-
-      const monthEndDate = new Date(
-        Date.UTC(yearNumber, monthNumber, 0)
-      );
-
-      const monthEnd = monthEndDate
-        .toISOString()
-        .slice(0, 10);
-
       // GET EFFECTIVE SALARY STRUCTURE
 
       const salary = await trx("salary_structures")
@@ -167,21 +253,14 @@ async function createPayrollRun({ adminId, month, year }) {
         throw error;
       }
 
-      // GET DAY SUMMARIES
+      // GET FINAL LOP INCLUDING ADMIN ADJUSTMENTS
 
-      const daySummaries = await trx("day_summaries")
-        .select("work_date", "status", "lop_value", "is_locked")
-        .where("user_id", user.id)
-        .whereRaw("EXTRACT(YEAR FROM work_date) = ?", [yearNumber])
-        .whereRaw("EXTRACT(MONTH FROM work_date) = ?", [monthNumber]);
-
-      // CALCULATE LOP
-
-      let lopDays = 0;
-
-      for (const day of daySummaries) {
-        lopDays += Number(day.lop_value || 0);
-      }
+      const lopDays = await getFinalEmployeeLopDays({
+        trx,
+        userId: user.id,
+        year: yearNumber,
+        month: monthNumber,
+      });
 
       // CALENDAR DAYS
 
@@ -204,12 +283,14 @@ async function createPayrollRun({ adminId, month, year }) {
       const otherDeductions = [];
 
       const otherEarningsTotal = otherEarnings.reduce(
-        (total, item) => total + Number(item.amount || 0),
+        (total, item) =>
+          total + Number(item.amount || 0),
         0
       );
 
       const otherDeductionsTotal = otherDeductions.reduce(
-        (total, item) => total + Number(item.amount || 0),
+        (total, item) =>
+          total + Number(item.amount || 0),
         0
       );
 
@@ -292,6 +373,7 @@ async function createPayrollRun({ adminId, month, year }) {
   });
 }
 
+
 // GET PAYROLL RUNS
 
 
@@ -347,6 +429,10 @@ async function getPayrollRunById({ payrollRunId }) {
     throw error;
   }
 
+  // =================================================
+  // 1. GET PAYROLL RUN
+  // =================================================
+
   const payrollRun = await knex("payroll_runs")
     .where("id", id)
     .first();
@@ -356,6 +442,10 @@ async function getPayrollRunById({ payrollRunId }) {
     error.code = "NOT_FOUND";
     throw error;
   }
+
+  // =================================================
+  // 2. GET PAYROLL ITEMS
+  // =================================================
 
   const payrollItems = await knex("payroll_items as pi")
     .join("users as u", "pi.user_id", "u.id")
@@ -379,19 +469,173 @@ async function getPayrollRunById({ payrollRunId }) {
     .where("pi.payroll_run_id", id)
     .orderBy("u.name");
 
-  // GET LOP DATES
+  // =================================================
+  // 3. GET MONTH RANGE
+  // =================================================
 
-  for (const item of payrollItems) {
-    const lopDates = await knex("day_summaries")
-      .select("work_date", "status", "lop_value")
-      .where("user_id", item.user_id)
-      .whereRaw("EXTRACT(YEAR FROM work_date)=?", [payrollRun.year])
-      .whereRaw("EXTRACT(MONTH FROM work_date)=?", [payrollRun.month])
-      .where("lop_value", ">", 0)
+  const monthStart =
+    `${payrollRun.year}-${String(payrollRun.month).padStart(2, "0")}-01`;
+
+  const nextMonthDate = new Date(
+    Date.UTC(
+      Number(payrollRun.year),
+      Number(payrollRun.month),
+      1
+    )
+  );
+
+  const endExclusive = nextMonthDate
+    .toISOString()
+    .slice(0, 10);
+
+  // =================================================
+  // 4. GET ALL DAY SUMMARIES
+  // =================================================
+
+  const userIds = payrollItems.map(item => item.user_id);
+
+  let daySummaries = [];
+  let adjustments = [];
+
+  if (userIds.length > 0) {
+
+    daySummaries = await knex("day_summaries")
+      .select(
+        "user_id",
+        "status",
+        "lop_value"
+      )
+      .select(
+        knex.raw("work_date::text AS work_date")
+      )
+      .whereIn("user_id", userIds)
+      .where("work_date", ">=", monthStart)
+      .where("work_date", "<", endExclusive)
       .orderBy("work_date");
 
-    item.lop_dates = lopDates;
+    // =================================================
+    // 5. GET LATEST LOP ADJUSTMENTS
+    // =================================================
+
+    adjustments = await knex("attendance_lop_adjustments")
+      .select(
+        "id",
+        "user_id",
+        "new_lop",
+        "previous_lop",
+        "reason",
+        "created_at"
+      )
+      .select(
+        knex.raw("work_date::text AS work_date")
+      )
+      .whereIn("user_id", userIds)
+      .where("work_date", ">=", monthStart)
+      .where("work_date", "<", endExclusive)
+      .orderBy("id", "desc");
   }
+
+  // =================================================
+  // 6. BUILD LATEST ADJUSTMENT MAP
+  // =================================================
+
+  const adjustmentMap = new Map();
+
+  for (const adjustment of adjustments) {
+
+    const date = String(adjustment.work_date).slice(0, 10);
+
+    const key = `${adjustment.user_id}_${date}`;
+
+    // First record is the latest because id DESC.
+    if (!adjustmentMap.has(key)) {
+      adjustmentMap.set(key, adjustment);
+    }
+  }
+
+  // =================================================
+  // 7. BUILD LOP DATE DETAILS
+  // =================================================
+
+  const summariesByUser = new Map();
+
+  for (const day of daySummaries) {
+
+    const userId = String(day.user_id);
+
+    if (!summariesByUser.has(userId)) {
+      summariesByUser.set(userId, []);
+    }
+
+    const date = String(day.work_date).slice(0, 10);
+
+    const calculatedLop = Number(day.lop_value || 0);
+
+    const key = `${userId}_${date}`;
+
+    const adjustment = adjustmentMap.get(key);
+
+    let finalLop = calculatedLop;
+    let adjustedLop = null;
+
+    // Apply adjustment only for ABSENT status.
+    if (day.status === "ABSENT" && adjustment) {
+
+      adjustedLop = Number(adjustment.new_lop);
+
+      finalLop = adjustedLop;
+    }
+
+    // Include dates that originally had LOP,
+    // even if the adjustment reduces LOP to zero.
+    if (calculatedLop > 0 || finalLop > 0) {
+
+      summariesByUser.get(userId).push({
+
+        work_date: date,
+
+        status: day.status,
+
+        calculated_lop_value: calculatedLop.toFixed(2),
+
+        adjusted_lop_value:
+          adjustedLop === null
+            ? null
+            : adjustedLop.toFixed(2),
+
+        lop_value: finalLop.toFixed(2),
+
+        lop_adjustment:
+          day.status === "ABSENT" && adjustment
+            ? {
+                id: adjustment.id,
+                previous_lop: Number(
+                  adjustment.previous_lop
+                ).toFixed(2),
+                new_lop: Number(
+                  adjustment.new_lop
+                ).toFixed(2),
+                reason: adjustment.reason,
+                created_at: adjustment.created_at,
+              }
+            : null,
+      });
+    }
+  }
+
+  // =================================================
+  // 8. ATTACH LOP DATES TO PAYROLL ITEMS
+  // =================================================
+
+  for (const item of payrollItems) {
+
+    item.lop_dates =
+      summariesByUser.get(String(item.user_id)) || [];
+  }
+
+  // =================================================
+  // 9. RESPONSE
+  // =================================================
 
   return {
     success: true,
@@ -516,7 +760,6 @@ async function recomputePayrollRun({
   payrollRunId,
   adminId,
 }) {
-
   const id = Number(payrollRunId);
 
   if (!Number.isInteger(id) || id <= 0) {
@@ -527,8 +770,12 @@ async function recomputePayrollRun({
 
   return knex.transaction(async (trx) => {
 
+    
+    // 1. LOCK PAYROLL RUN
+
     const payrollRun = await trx("payroll_runs")
       .where("id", id)
+      .forUpdate()
       .first();
 
     if (!payrollRun) {
@@ -538,105 +785,261 @@ async function recomputePayrollRun({
     }
 
     if (payrollRun.status !== "DRAFT") {
-      const error = new Error("Payroll run is already finalized");
+      const error = new Error(
+        "Payroll run is already finalized"
+      );
       error.code = "INVALID_STATE";
       throw error;
     }
 
-    const payrollItems = await trx("payroll_items")
-      .where("payroll_run_id", id);
+    const year = Number(payrollRun.year);
+    const month = Number(payrollRun.month);
+
+    const monthStart =
+      `${year}-${String(month).padStart(2, "0")}-01`;
+
+    const monthEnd = new Date(
+      Date.UTC(year, month, 0)
+    ).toISOString().slice(0, 10);
+
+    const calendarDays = new Date(
+      Date.UTC(year, month, 0)
+    ).getUTCDate();
+
+   
+    // 2. LOCK EXISTING PAYROLL ITEMS
+
+    const existingItems = await trx("payroll_items")
+      .where("payroll_run_id", id)
+      .forUpdate();
+
+    const existingItemMap = new Map();
+
+    for (const item of existingItems) {
+      existingItemMap.set(
+        String(item.user_id),
+        item
+      );
+    }
+
+    // =================================================
+    // 3. GET ALL ACTIVE EMPLOYEES
+    // =================================================
+
+    const employees = await trx("users")
+      .select(
+        "id",
+        "emp_code",
+        "name",
+        "role",
+        "status",
+        "date_of_joining"
+      )
+      .where("role", "EMPLOYEE")
+      .where("status", "ACTIVE")
+      .forUpdate();
+
+    // Include existing payroll items too.
+    // This preserves payroll records for employees
+    // who may have become inactive after creation.
+
+    const employeeMap = new Map();
+
+    for (const employee of employees) {
+      employeeMap.set(
+        String(employee.id),
+        employee
+      );
+    }
+
+    for (const item of existingItems) {
+      const userId = String(item.user_id);
+
+      if (!employeeMap.has(userId)) {
+        const employee = await trx("users")
+          .where("id", item.user_id)
+          .first();
+
+        if (employee) {
+          employeeMap.set(userId, employee);
+        }
+      }
+    }
+
+    // =================================================
+    // 4. PROCESS EMPLOYEES
+    // =================================================
 
     let updatedCount = 0;
+    let insertedCount = 0;
 
-    for (const item of payrollItems) {
+    for (const employee of employeeMap.values()) {
+
+      const userId = employee.id;
+
+      // -----------------------------------------------
+      // GET EFFECTIVE SALARY STRUCTURE
+      // -----------------------------------------------
 
       const salary = await trx("salary_structures")
-        .where("user_id", item.user_id)
-        .where(
-          "effective_from",
-          "<=",
-          `${payrollRun.year}-${String(payrollRun.month).padStart(2, "0")}-31`
-        )
+        .where("user_id", userId)
+        .where("effective_from", "<=", monthEnd)
+        .where(function () {
+          this.whereNull("effective_to")
+            .orWhere("effective_to", ">=", monthStart);
+        })
         .orderBy("effective_from", "desc")
+        .orderBy("id", "desc")
         .first();
 
       if (!salary) {
         const error = new Error(
-          `Salary structure not found for employee ${item.user_id}`
+          `Salary structure not found for employee ${userId}`
         );
 
         error.code = "SALARY_STRUCTURE_NOT_FOUND";
-        error.userId = item.user_id;
+        error.userId = userId;
+
         throw error;
       }
 
-      const summaries = await trx("day_summaries")
-        .select("lop_value")
-        .where("user_id", item.user_id)
-        .whereRaw("EXTRACT(YEAR FROM work_date)=?", [payrollRun.year])
-        .whereRaw("EXTRACT(MONTH FROM work_date)=?", [payrollRun.month]);
+      // -----------------------------------------------
+      // GET FINAL LOP INCLUDING ADMIN ADJUSTMENTS
+      // -----------------------------------------------
 
-      let lopDays = 0;
-
-      summaries.forEach((day) => {
-        lopDays += Number(day.lop_value || 0);
+      const lopDays = await getFinalEmployeeLopDays({
+        trx,
+        userId,
+        year,
+        month,
       });
 
-      const calendarDays = new Date(
-        Date.UTC(payrollRun.year, payrollRun.month, 0)
-      ).getUTCDate();
+      // -----------------------------------------------
+      // CALCULATE PAYABLE DAYS
+      // -----------------------------------------------
 
-      const payableDays = calendarDays - lopDays;
+      const payableDays = Math.max(
+        0,
+        calendarDays - lopDays
+      );
 
-      const perDay = Number(salary.gross) / calendarDays;
+      const gross = Number(salary.gross);
+
+      const perDay = gross / calendarDays;
 
       const lopAmount = perDay * lopDays;
 
+      // -----------------------------------------------
+      // FIND EXISTING PAYROLL ITEM
+      // -----------------------------------------------
+
+      const existingItem = existingItemMap.get(
+        String(userId)
+      );
+
+      // -----------------------------------------------
       // PRESERVE MANUAL ADJUSTMENTS
+      // -----------------------------------------------
 
-      const earnings = Array.isArray(item.other_earnings)
-        ? item.other_earnings
-        : typeof item.other_earnings === "string"
-          ? JSON.parse(item.other_earnings || "[]")
-          : [];
+      let earnings = [];
+      let deductions = [];
+      let remarks = null;
 
-      const deductions = Array.isArray(item.other_deductions)
-        ? item.other_deductions
-        : typeof item.other_deductions === "string"
-          ? JSON.parse(item.other_deductions || "[]")
-          : [];
+      if (existingItem) {
+
+        earnings = Array.isArray(existingItem.other_earnings)
+          ? existingItem.other_earnings
+          : typeof existingItem.other_earnings === "string"
+            ? JSON.parse(existingItem.other_earnings || "[]")
+            : [];
+
+        deductions = Array.isArray(existingItem.other_deductions)
+          ? existingItem.other_deductions
+          : typeof existingItem.other_deductions === "string"
+            ? JSON.parse(existingItem.other_deductions || "[]")
+            : [];
+
+        remarks = existingItem.remarks || null;
+      }
 
       const earningsTotal = earnings.reduce(
-        (sum, earning) => sum + Number(earning.amount || 0),
+        (sum, earning) =>
+          sum + Number(earning.amount || 0),
         0
       );
 
       const deductionsTotal = deductions.reduce(
-        (sum, deduction) => sum + Number(deduction.amount || 0),
+        (sum, deduction) =>
+          sum + Number(deduction.amount || 0),
         0
       );
 
+      // -----------------------------------------------
+      // CALCULATE NET PAY
+      // -----------------------------------------------
+
       const netPay =
-        Number(salary.gross) -
+        gross -
         lopAmount +
         earningsTotal -
         deductionsTotal;
 
-      await trx("payroll_items")
-        .where("id", item.id)
-        .update({
-          gross: salary.gross,
-          calendar_days: calendarDays,
-          payable_days: payableDays,
-          lop_days: lopDays,
-          per_day: perDay,
-          lop_amount: lopAmount,
-          net_pay: netPay,
-          updated_at: trx.fn.now(),
+      // -----------------------------------------------
+      // PAYROLL ITEM DATA
+      // -----------------------------------------------
+
+      const payrollItemData = {
+        gross,
+        calendar_days: calendarDays,
+        payable_days: payableDays,
+        lop_days: lopDays,
+        per_day: Number(perDay.toFixed(2)),
+        lop_amount: Number(lopAmount.toFixed(2)),
+        net_pay: Number(netPay.toFixed(2)),
+        updated_at: trx.fn.now(),
+      };
+
+      // -----------------------------------------------
+      // UPDATE EXISTING ITEM
+      // -----------------------------------------------
+
+      if (existingItem) {
+
+        await trx("payroll_items")
+          .where("id", existingItem.id)
+          .update(payrollItemData);
+
+        updatedCount++;
+
+      } else {
+
+        // ---------------------------------------------
+        // INSERT MISSING PAYROLL ITEM
+        // ---------------------------------------------
+
+        await trx("payroll_items").insert({
+          payroll_run_id: id,
+          user_id: userId,
+
+          ...payrollItemData,
+
+          other_earnings: JSON.stringify([]),
+          other_deductions: JSON.stringify([]),
+
+          remarks: null,
+
+          created_at: trx.fn.now(),
         });
 
-      updatedCount++;
+        insertedCount++;
+      }
     }
+
+    // =================================================
+    // 5. AUDIT LOG
+    // =================================================
+
+    const totalItems = updatedCount + insertedCount;
 
     await trx("audit_log").insert({
       actor_id: adminId,
@@ -647,9 +1050,15 @@ async function recomputePayrollRun({
       after: JSON.stringify({
         payroll_run_id: id,
         updated_items: updatedCount,
+        inserted_items: insertedCount,
+        total_items: totalItems,
       }),
       reason: "Payroll recomputed after attendance changes",
     });
+
+    // =================================================
+    // 6. RESPONSE
+    // =================================================
 
     return {
       success: true,
@@ -657,6 +1066,8 @@ async function recomputePayrollRun({
       data: {
         payroll_run_id: id,
         updated_items: updatedCount,
+        inserted_items: insertedCount,
+        total_items: totalItems,
       },
     };
   });
@@ -830,14 +1241,16 @@ async function buildPayslipData({
 }
 
 
-// FINALIZE PAYROLL RUN + PUBLISH PAYSLIPS + NOTIFICATIONS
 
+// =====================================================
+// FINALIZE PAYROLL RUN + PUBLISH / UPDATE PAYSLIPS
+// + NOTIFICATIONS
+// =====================================================
 
 async function finalizePayrollRun({
   payrollRunId,
   adminId,
 }) {
-
   const id = Number(payrollRunId);
 
   if (!Number.isInteger(id) || id <= 0) {
@@ -847,12 +1260,14 @@ async function finalizePayrollRun({
   }
 
   const generatedFiles = [];
+  const oldFilesToDelete = [];
 
   try {
-
     const result = await knex.transaction(async (trx) => {
 
-      // GET AND LOCK PAYROLL RUN
+      // =================================================
+      // 1. GET AND LOCK PAYROLL RUN
+      // =================================================
 
       const payrollRun = await trx("payroll_runs")
         .where("id", id)
@@ -874,11 +1289,14 @@ async function finalizePayrollRun({
         throw error;
       }
 
-      // GET PAYROLL ITEMS
+      // =================================================
+      // 2. GET AND LOCK PAYROLL ITEMS
+      // =================================================
 
       const payrollItems = await trx("payroll_items")
         .where("payroll_run_id", id)
-        .orderBy("id");
+        .orderBy("id")
+        .forUpdate();
 
       if (payrollItems.length === 0) {
         const error = new Error(
@@ -889,9 +1307,13 @@ async function finalizePayrollRun({
         throw error;
       }
 
-      // GENERATE PAYSLIPS AND NOTIFICATIONS
+      let insertedPayslips = 0;
+      let updatedPayslips = 0;
+      let notificationsCreated = 0;
 
-      let publishedPayslips = 0;
+      // =================================================
+      // 3. GENERATE OR UPDATE PAYSLIPS
+      // =================================================
 
       for (const item of payrollItems) {
 
@@ -914,18 +1336,10 @@ async function finalizePayrollRun({
 
         const existingPayslip = await trx("payslips")
           .where("payroll_item_id", item.id)
+          .forUpdate()
           .first();
 
-        if (existingPayslip) {
-          const error = new Error(
-            `Payslip already exists for payroll item ${item.id}`
-          );
-
-          error.code = "INVALID_STATE";
-          throw error;
-        }
-
-        // BUILD PAYSLIP DATA
+        // BUILD UPDATED PAYSLIP DATA
 
         const payslipData = await buildPayslipData({
           trx,
@@ -936,12 +1350,17 @@ async function finalizePayrollRun({
 
         // FILE NAME
 
-        const fileName =
+        const baseFileName =
           `payslip-${user.emp_code}-${payrollRun.year}-${String(
             payrollRun.month
-          ).padStart(2, "0")}-${item.id}.pdf`;
+          ).padStart(2, "0")}-${item.id}`;
 
-        // RELATIVE PATH
+        // Existing payslips get a new filename.
+        // This protects the old PDF until transaction commit.
+
+        const fileName = existingPayslip
+          ? `${baseFileName}-revised.pdf`
+          : `${baseFileName}.pdf`;
 
         const relativePath = path.join(
           "uploads",
@@ -950,8 +1369,6 @@ async function finalizePayrollRun({
           String(payrollRun.month).padStart(2, "0"),
           fileName
         );
-
-        // ABSOLUTE PATH
 
         const filePath = path.join(
           process.cwd(),
@@ -967,63 +1384,131 @@ async function finalizePayrollRun({
 
         generatedFiles.push(filePath);
 
-        // INSERT PAYSLIP
+        let payslip;
 
-        const [payslip] = await trx("payslips")
-          .insert({
-            payroll_item_id: item.id,
-            user_id: item.user_id,
-            month: payrollRun.month,
-            year: payrollRun.year,
+        // =================================================
+        // 4. UPDATE EXISTING PAYSLIP
+        // =================================================
+
+        if (existingPayslip) {
+
+          // Preserve the existing payslip ID.
+
+          await trx("payslips")
+            .where("id", existingPayslip.id)
+            .update({
+              pdf_path: relativePath,
+              published_at: trx.fn.now(),
+              updated_at: trx.fn.now(),
+            });
+
+          payslip = {
+            ...existingPayslip,
             pdf_path: relativePath,
-            published_at: trx.fn.now(),
+          };
+
+          updatedPayslips++;
+
+          // Save old PDF path for cleanup after commit.
+
+          if (existingPayslip.pdf_path) {
+            const oldFilePath = path.resolve(
+              process.cwd(),
+              existingPayslip.pdf_path
+            );
+
+            if (oldFilePath !== path.resolve(filePath)) {
+              oldFilesToDelete.push(oldFilePath);
+            }
+          }
+
+        } else {
+
+          // =================================================
+          // 5. INSERT NEW PAYSLIP
+          // =================================================
+
+          const [newPayslip] = await trx("payslips")
+            .insert({
+              payroll_item_id: item.id,
+              user_id: item.user_id,
+              month: payrollRun.month,
+              year: payrollRun.year,
+              pdf_path: relativePath,
+              published_at: trx.fn.now(),
+            })
+            .returning([
+              "id",
+              "payroll_item_id",
+              "user_id",
+              "month",
+              "year",
+              "pdf_path",
+              "published_at",
+            ]);
+
+          payslip = newPayslip;
+
+          insertedPayslips++;
+        }
+
+        // =================================================
+        // 6. CHECK EXISTING NOTIFICATION
+        // =================================================
+
+        const existingNotification = await trx("notifications")
+          .where({
+            user_id: user.id,
+            type: "PAYSLIP_PUBLISHED",
+            entity_type: "payslip",
+            entity_id: payslip.id,
           })
-          .returning([
-            "id",
-            "payroll_item_id",
-            "user_id",
-            "month",
-            "year",
-            "published_at",
-          ]);
+          .first();
 
-        // SEND DATABASE NOTIFICATION TO EMPLOYEE
+        // =================================================
+        // 7. CREATE NOTIFICATION IF NOT ALREADY PRESENT
+        // =================================================
 
-        await notifyUser(trx, {
-          userId: user.id,
-          actorId: adminId,
+        if (!existingNotification) {
 
-          type: "PAYSLIP_PUBLISHED",
+          await notifyUser(trx, {
+            userId: user.id,
+            actorId: adminId,
 
-          title: "Payslip Published",
+            type: "PAYSLIP_PUBLISHED",
 
-          message:
-            `Your payslip for ${String(
-              payrollRun.month
-            ).padStart(2, "0")}/${payrollRun.year} has been published. You can now view and download it.`,
+            title: "Payslip Published",
 
-          entityId: payslip.id,
+            message:
+              `Your payslip for ${String(
+                payrollRun.month
+              ).padStart(2, "0")}/${payrollRun.year} has been published. You can now view and download it.`,
 
-          data: {
-            employee_id: user.id,
-            employee_name: user.name,
-            emp_code: user.emp_code,
+            entityId: payslip.id,
 
-            payslip_id: payslip.id,
-            payroll_item_id: item.id,
-            payroll_run_id: payrollRun.id,
+            data: {
+              employee_id: user.id,
+              employee_name: user.name,
+              emp_code: user.emp_code,
 
-            month: payrollRun.month,
-            year: payrollRun.year,
+              payslip_id: payslip.id,
+              payroll_item_id: item.id,
+              payroll_run_id: payrollRun.id,
 
-            published_at: payslip.published_at,
-          },
-        });
+              month: payrollRun.month,
+              year: payrollRun.year,
 
-        publishedPayslips++;
+              published_at: payslip.published_at,
+            },
+          });
+
+          notificationsCreated++;
+        }
       }
 
-      // LOCK DAY SUMMARIES
+      // =================================================
+      // 8. LOCK DAY SUMMARIES
+      // =================================================
 
       const lockedCount = await trx("day_summaries")
         .whereRaw(
@@ -1039,7 +1524,9 @@ async function finalizePayrollRun({
           updated_at: trx.fn.now(),
         });
 
-      // FINALIZE PAYROLL RUN
+      // =================================================
+      // 9. FINALIZE PAYROLL RUN
+      // =================================================
 
       await trx("payroll_runs")
         .where("id", id)
@@ -1050,7 +1537,9 @@ async function finalizePayrollRun({
           updated_at: trx.fn.now(),
         });
 
-      // AUDIT LOG
+      // =================================================
+      // 10. AUDIT LOG
+      // =================================================
 
       await trx("audit_log").insert({
         actor_id: adminId,
@@ -1065,32 +1554,68 @@ async function finalizePayrollRun({
         after: JSON.stringify({
           status: "FINALIZED",
           payroll_run_id: id,
-          payslips_generated: publishedPayslips,
+          total_employees: payrollItems.length,
+          payslips_inserted: insertedPayslips,
+          payslips_updated: updatedPayslips,
+          notifications_created: notificationsCreated,
           day_summaries_locked: lockedCount,
         }),
 
         reason: "Payroll run finalized and payslips published",
       });
 
-      // RESPONSE
+      // =================================================
+      // 11. RESPONSE
+      // =================================================
 
       return {
         success: true,
         message: "Payroll finalized successfully",
+
         data: {
           payroll_run_id: id,
           status: "FINALIZED",
-          payslips_generated: publishedPayslips,
+
+          total_employees: payrollItems.length,
+
+          payslips_generated:
+            insertedPayslips + updatedPayslips,
+
+          payslips_inserted: insertedPayslips,
+          payslips_updated: updatedPayslips,
+
+          notifications_created: notificationsCreated,
+
           day_summaries_locked: lockedCount,
         },
       };
     });
 
+    // ===================================================
+    // 12. DELETE OLD PDF FILES AFTER COMMIT
+    // ===================================================
+
+    for (const oldFilePath of oldFilesToDelete) {
+      try {
+        if (fs.existsSync(oldFilePath)) {
+          fs.unlinkSync(oldFilePath);
+        }
+      } catch (cleanupError) {
+        console.error(
+          "Failed to remove old payslip PDF:",
+          oldFilePath,
+          cleanupError
+        );
+      }
+    }
+
     return result;
 
   } catch (error) {
 
-    // CLEAN UP GENERATED PDF FILES IF TRANSACTION FAILS
+    // ===================================================
+    // 13. CLEAN UP NEW PDF FILES IF TRANSACTION FAILS
+    // ===================================================
 
     for (const filePath of generatedFiles) {
       try {
@@ -1099,7 +1624,7 @@ async function finalizePayrollRun({
         }
       } catch (cleanupError) {
         console.error(
-          "Failed to cleanup payslip PDF:",
+          "Failed to cleanup generated payslip PDF:",
           cleanupError
         );
       }
@@ -1314,4 +1839,5 @@ module.exports = {
   exportPayrollRun,
   getMyPayslips,
   downloadMyPayslip,
+  getFinalEmployeeLopDays,
 };

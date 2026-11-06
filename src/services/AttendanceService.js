@@ -1,4 +1,3 @@
-
 const knex = require("../config/database");
 
 const {
@@ -28,19 +27,160 @@ const STATUS = {
   INSUFFICIENT: "INSUFFICIENT",
 };
 
+const MAX_LOP_VALUE = 2;
+const LOP_STEP = 0.5;
+
+// =====================================================
+// HELPER - NORMALIZE DATE KEY
+// =====================================================
+
+function normalizeDateKey(value) {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    return [
+      value.getFullYear(),
+      String(value.getMonth() + 1).padStart(2, "0"),
+      String(value.getDate()).padStart(2, "0"),
+    ].join("-");
+  }
+
+  return String(value).slice(0, 10);
+}
+
+// HELPER LOP
+
+async function getLatestLopAdjustments({
+  userId = null,
+  startDate,
+  endExclusive,
+  trx = knex,
+}) {
+  let query = trx("attendance_lop_adjustments")
+    .where("work_date", ">=", startDate)
+    .where("work_date", "<", endExclusive)
+    .orderBy("id", "desc");
+
+  // Filter by employee only when userId is provided.
+  if (userId !== null && userId !== undefined) {
+    query = query.where("user_id", userId);
+  }
+
+  const adjustments = await query;
+
+  const adjustmentMap = new Map();
+
+  for (const adjustment of adjustments) {
+    const userKey = String(adjustment.user_id);
+
+    const dateKey = normalizeDateKey(
+      adjustment.work_date
+    );
+
+    // Keep only the latest adjustment for each employee/date.
+    const key = `${userKey}_${dateKey}`;
+
+    if (!adjustmentMap.has(key)) {
+      adjustmentMap.set(key, adjustment);
+    }
+  }
+
+  // Return a user-keyed map for a single date.
+  // For a date range, return a map keyed by user/date.
+  if (startDate && endExclusive) {
+    const isSingleDay =
+      new Date(`${startDate}T00:00:00Z`).getTime() +
+        86400000 ===
+      new Date(`${endExclusive}T00:00:00Z`).getTime();
+
+    if (isSingleDay) {
+      const dailyMap = new Map();
+
+      for (const adjustment of adjustmentMap.values()) {
+        dailyMap.set(
+          String(adjustment.user_id),
+          adjustment
+        );
+      }
+
+      return dailyMap;
+    }
+  }
+
+  return adjustmentMap;
+}
+
+
+// =====================================================
+// HELPER - GET FINAL LOP VALUE
+// =====================================================
+
+function getFinalLopValue(summary, adjustment) {
+  const calculatedLop = Number(summary?.lop_value || 0);
+
+  // Manual adjustments only apply to ABSENT days.
+  // If the status changes, use the newly calculated LOP.
+
+  if (
+    summary &&
+    summary.status === STATUS.ABSENT &&
+    adjustment
+  ) {
+    return Number(adjustment.new_lop);
+  }
+
+  return calculatedLop;
+}
+
+// =====================================================
+// HELPER - FORMAT LOP DETAILS
+// =====================================================
+
+function formatLopDetails(summary, adjustment) {
+  const calculatedLop = Number(summary?.lop_value || 0);
+
+  const isAdjustmentActive =
+    Boolean(
+      summary &&
+      summary.status === STATUS.ABSENT &&
+      adjustment
+    );
+
+  const finalLop = isAdjustmentActive
+    ? Number(adjustment.new_lop)
+    : calculatedLop;
+
+  return {
+    calculated_lop_value: calculatedLop,
+
+    adjusted_lop_value: isAdjustmentActive
+      ? Number(adjustment.new_lop)
+      : null,
+
+    lop_value: finalLop,
+
+    lop_adjustment: isAdjustmentActive
+      ? adjustment
+      : null,
+  };
+}
+
 // =====================================================
 // NOTIFICATION HELPER
 // =====================================================
 
-async function notifyUser(trx, {
-  userId,
-  actorId,
-  type,
-  title,
-  message,
-  entityId,
-  data = {},
-}) {
+async function notifyUser(
+  trx,
+  {
+    userId,
+    actorId,
+    type,
+    title,
+    message,
+    entityId,
+    data = {},
+  }
+) {
   await trx("notifications").insert({
     user_id: userId,
     actor_id: actorId,
@@ -83,7 +223,11 @@ async function getSetting(key, trx = knex) {
 // HELPER - GET NUMBER SETTING
 // =====================================================
 
-async function getNumberSetting(key, defaultValue, trx = knex) {
+async function getNumberSetting(
+  key,
+  defaultValue,
+  trx = knex
+) {
   const value = await getSetting(key, trx);
 
   if (value === null || value === undefined) {
@@ -165,7 +309,11 @@ async function isWeeklyOff(date, trx = knex) {
 // HELPER - GET APPROVED LEAVE
 // =====================================================
 
-async function getApprovedLeaveForDate(userId, date, trx = knex) {
+async function getApprovedLeaveForDate(
+  userId,
+  date,
+  trx = knex
+) {
   return trx("leave_requests")
     .where({
       user_id: userId,
@@ -180,7 +328,11 @@ async function getApprovedLeaveForDate(userId, date, trx = knex) {
 // HELPER - GET APPROVED PERMISSIONS
 // =====================================================
 
-async function getApprovedPermissionsForDate(userId, date, trx = knex) {
+async function getApprovedPermissionsForDate(
+  userId,
+  date,
+  trx = knex
+) {
   return trx("permission_requests")
     .where({
       user_id: userId,
@@ -194,7 +346,11 @@ async function getApprovedPermissionsForDate(userId, date, trx = knex) {
 // HELPER - GET RAW + CORRECTION PUNCHES
 // =====================================================
 
-async function getPunchesForDate(user, date, trx = knex) {
+async function getPunchesForDate(
+  user,
+  date,
+  trx = knex
+) {
   const start = `${date} 00:00:00`;
 
   const nextDate = new Date(`${date}T00:00:00Z`);
@@ -204,8 +360,6 @@ async function getPunchesForDate(user, date, trx = knex) {
   const nextDateString = nextDate.toISOString().slice(0, 10);
 
   const end = `${nextDateString} 00:00:00`;
-
-  // RAW PUNCHES
 
   const rawPunches = await trx("raw_punches")
     .select(
@@ -222,8 +376,6 @@ async function getPunchesForDate(user, date, trx = knex) {
     .where("punched_at", ">=", start)
     .where("punched_at", "<", end)
     .orderBy("punched_at", "asc");
-
-  // CORRECTION PUNCHES
 
   const corrections = await trx("correction_punches")
     .select(
@@ -251,8 +403,6 @@ async function getPunchesForDate(user, date, trx = knex) {
     .where("correction_punches.punched_at", "<", end)
     .orderBy("correction_punches.punched_at", "asc");
 
-  // MARK SOURCES
-
   const raw = rawPunches.map((punch) => ({
     ...punch,
     source_type: "RAW",
@@ -266,8 +416,6 @@ async function getPunchesForDate(user, date, trx = knex) {
     correction_id: punch.id,
     is_correction: true,
   }));
-
-  // MERGE
 
   return [...raw, ...corrected].sort(
     (a, b) =>
@@ -301,15 +449,11 @@ async function calculateDaySummary({
     trx
   );
 
-  // PERMISSION TOTAL
-
   const permissionMin = permissions.reduce(
     (sum, item) =>
       sum + Number(item.minutes || 0),
     0
   );
-
-  // HOLIDAY
 
   if (holiday) {
     return {
@@ -326,8 +470,6 @@ async function calculateDaySummary({
     };
   }
 
-  // WEEKLY OFF
-
   if (weeklyOff) {
     return {
       status: STATUS.WEEKLY_OFF,
@@ -342,8 +484,6 @@ async function calculateDaySummary({
       lop_value: 0,
     };
   }
-
-  // LEAVE
 
   if (leave) {
     return {
@@ -360,8 +500,6 @@ async function calculateDaySummary({
     };
   }
 
-  // COMPLETED SESSIONS
-
   const completedSessions = sessions.filter(
     (session) =>
       session.in_at &&
@@ -369,47 +507,37 @@ async function calculateDaySummary({
       session.duration_min !== null
   );
 
-  // WORK MINUTES
-
   const workMin = completedSessions.reduce(
     (sum, session) =>
       sum + Number(session.duration_min || 0),
     0
   );
 
-  // BREAK MINUTES
-
   const breakMin = calculateBreakMinutes(sessions);
-
-  // FIRST IN
 
   const firstIn =
     sessions
       .filter((session) => session.in_at)
       .map((session) => session.in_at)
       .sort(
-        (a, b) => new Date(a) - new Date(b)
+        (a, b) =>
+          new Date(a) - new Date(b)
       )[0] || null;
-
-  // LAST OUT
 
   const lastOut =
     sessions
       .filter((session) => session.out_at)
       .map((session) => session.out_at)
       .sort(
-        (a, b) => new Date(b) - new Date(a)
+        (a, b) =>
+          new Date(b) - new Date(a)
       )[0] || null;
-
-  // REGULARIZATION
 
   const needsRegularization = sessions.some(
     (session) =>
       session.flag === "MISSING_IN" ||
       session.flag === "MISSING_OUT"
   );
-
-  // SHIFT SETTINGS
 
   const shift = await getSetting("shift", trx);
 
@@ -441,8 +569,6 @@ async function calculateDaySummary({
 
   const halfDayMin = halfDayHours * 60;
 
-  // LATE CALCULATION
-
   let isLate = false;
 
   if (firstIn && shift && shift.start) {
@@ -459,19 +585,16 @@ async function calculateDaySummary({
     isLate = lateMinutes > graceMin;
   }
 
-  // EXCESS BREAK
-
-  const excessBreak = breakMin > breakAllowanceMin;
-
-  // STATUS
+  const excessBreak =
+    breakMin > breakAllowanceMin;
 
   let status = STATUS.ABSENT;
 
-  let lopValue = 1;
+  let lopValue = 2;
 
   if (needsRegularization) {
     status = STATUS.INSUFFICIENT;
-    lopValue = 1;
+    lopValue = 0.5;
   } else if (workMin >= fullDayMin) {
     status = STATUS.PRESENT;
     lopValue = 0;
@@ -480,7 +603,7 @@ async function calculateDaySummary({
     lopValue = 0.5;
   } else {
     status = STATUS.ABSENT;
-    lopValue = 1;
+    lopValue = 2;
   }
 
   return {
@@ -501,33 +624,36 @@ async function calculateDaySummary({
 // HELPER - RECOMPUTE ONE DAY
 // =====================================================
 
-async function recomputeDay(userId, date, trx = knex) {
+async function recomputeDay(userId, date, trx = null) {
+  // Reuse an existing transaction or create a new one.
+  if (!trx) {
+    return knex.transaction(async (transaction) => {
+      return recomputeDay(userId, date, transaction);
+    });
+  }
+
   const normalizedDate = formatDateOnly(date);
 
   const user = await getEmployee(userId, trx);
 
-  // CHECK LOCK
-
+  // Lock the existing summary row to prevent concurrent recalculation.
   const existingSummary = await trx("day_summaries")
     .where({
       user_id: userId,
       work_date: normalizedDate,
     })
+    .forUpdate()
     .first();
 
   if (existingSummary && existingSummary.is_locked) {
     throw new Error("MONTH_LOCKED");
   }
 
-  // GET PUNCHES
-
   let punches = await getPunchesForDate(
     user,
     normalizedDate,
     trx
   );
-
-  // DUPLICATE WINDOW
 
   const duplicateWindow = await getNumberSetting(
     "duplicate_punch_window_min",
@@ -540,11 +666,7 @@ async function recomputeDay(userId, date, trx = knex) {
     duplicateWindow
   );
 
-  // BUILD SESSIONS
-
   const sessions = buildSessions(punches);
-
-  // CALCULATE SUMMARY
 
   const summary = await calculateDaySummary({
     user,
@@ -553,8 +675,6 @@ async function recomputeDay(userId, date, trx = knex) {
     trx,
   });
 
-  // DELETE OLD DERIVED SESSIONS
-
   await trx("attendance_sessions")
     .where({
       user_id: userId,
@@ -562,26 +682,22 @@ async function recomputeDay(userId, date, trx = knex) {
     })
     .del();
 
-  // INSERT NEW SESSIONS
-
-  for (const session of sessions) {
-    await trx("attendance_sessions").insert({
-      user_id: userId,
-      work_date: normalizedDate,
-      in_at: session.in_at,
-      out_at: session.out_at,
-      duration_min: session.duration_min,
-      flag: session.flag,
-    });
+  if (sessions.length > 0) {
+    await trx("attendance_sessions").insert(
+      sessions.map((session) => ({
+        user_id: userId,
+        work_date: normalizedDate,
+        in_at: session.in_at,
+        out_at: session.out_at,
+        duration_min: session.duration_min,
+        flag: session.flag,
+      }))
+    );
   }
-
-  // PRESERVE LOCK
 
   const isLocked = existingSummary
     ? existingSummary.is_locked
     : false;
-
-  // UPSERT DAY SUMMARY
 
   await trx("day_summaries")
     .insert({
@@ -611,7 +727,7 @@ async function recomputeDay(userId, date, trx = knex) {
       excess_break: summary.excess_break,
       needs_regularization: summary.needs_regularization,
       lop_value: summary.lop_value,
-      updated_at: knex.fn.now(),
+      updated_at: trx.fn.now(),
     });
 
   return {
@@ -620,9 +736,7 @@ async function recomputeDay(userId, date, trx = knex) {
   };
 }
 
-// =====================================================
-// EMPLOYEE - GET MY ATTENDANCE
-// =====================================================
+// GET MY ATTENDANCE
 
 async function getMyAttendance({
   userId,
@@ -643,8 +757,6 @@ async function getMyAttendance({
     validated.month
   );
 
-  // DAY SUMMARIES
-
   const daySummaries = await knex("day_summaries")
     .select(
       "id",
@@ -661,14 +773,31 @@ async function getMyAttendance({
       "lop_value",
       "is_locked"
     )
-    .where({
-      user_id: userId,
-    })
+    .where({ user_id: userId })
     .where("work_date", ">=", startDate)
     .where("work_date", "<", endExclusive)
     .orderBy("work_date", "asc");
 
-  // TOTALS
+  // GET LATEST LOP ADJUSTMENTS
+  const adjustmentMap = await getLatestLopAdjustments({
+    userId,
+    startDate,
+    endExclusive,
+  });
+
+  const formattedDaySummaries = daySummaries.map((day) => {
+    const date = normalizeDateKey(day.work_date);
+
+    // IMPORTANT: Monthly map key = userId_workDate
+    const adjustment =
+      adjustmentMap.get(`${userId}_${date}`) || null;
+
+    return {
+      ...day,
+      work_date: date,
+      ...formatLopDetails(day, adjustment),
+    };
+  });
 
   const totals = {
     present: 0,
@@ -681,34 +810,31 @@ async function getMyAttendance({
     late_count: 0,
     work_hours: 0,
     work_minutes: 0,
+    calculated_lop: 0,
+    lop_adjustment: 0,
+    lop_value: 0,
   };
 
-  for (const day of daySummaries) {
+  for (const day of formattedDaySummaries) {
     switch (day.status) {
       case STATUS.PRESENT:
         totals.present++;
         break;
-
       case STATUS.HALF_DAY:
         totals.half++;
         break;
-
       case STATUS.ABSENT:
         totals.absent++;
         break;
-
       case STATUS.LEAVE:
         totals.leave++;
         break;
-
       case STATUS.HOLIDAY:
         totals.holiday++;
         break;
-
       case STATUS.WEEKLY_OFF:
         totals.weekly_off++;
         break;
-
       case STATUS.INSUFFICIENT:
         totals.insufficient++;
         break;
@@ -719,24 +845,47 @@ async function getMyAttendance({
     }
 
     totals.work_minutes += Number(day.work_min || 0);
+
+    totals.calculated_lop += Number(
+      day.calculated_lop_value || 0
+    );
+
+    totals.lop_value += Number(day.lop_value || 0);
+
+    totals.lop_adjustment +=
+      Number(day.lop_value || 0) -
+      Number(day.calculated_lop_value || 0);
   }
 
   totals.work_hours = Number(
     (totals.work_minutes / 60).toFixed(2)
   );
 
-  // TODAY LIVE STATUS
+  totals.calculated_lop = Number(
+    totals.calculated_lop.toFixed(2)
+  );
 
-  const today = new Date().toISOString().slice(0, 10);
+  totals.lop_adjustment = Number(
+    totals.lop_adjustment.toFixed(2)
+  );
+
+  totals.lop_value = Number(
+    totals.lop_value.toFixed(2)
+  );
+
+  // TODAY LIVE STATUS
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 
   let liveStatus = "OUT";
   let lastPunch = null;
 
   if (today >= startDate && today < endExclusive) {
-    const punches = await getPunchesForDate(
-      employee,
-      today
-    );
+    const punches = await getPunchesForDate(employee, today);
 
     const duplicateWindow = await getNumberSetting(
       "duplicate_punch_window_min",
@@ -762,7 +911,6 @@ async function getMyAttendance({
 
   return {
     success: true,
-
     data: {
       employee: {
         id: employee.id,
@@ -770,26 +918,21 @@ async function getMyAttendance({
         name: employee.name,
         designation: employee.designation,
       },
-
       month: validated.month,
       year: validated.year,
-
-      day_summaries: daySummaries,
-
+      day_summaries: formattedDaySummaries,
       today: {
         date: today,
         status: liveStatus,
         last_punch: lastPunch,
       },
-
       totals,
     },
   };
 }
 
-// =====================================================
-// EMPLOYEE - GET MY ATTENDANCE DAY
-// =====================================================
+// GET MY ATTENDANCE FOR A SPECIFIC DAY
+
 
 async function getMyAttendanceDay({
   userId,
@@ -803,8 +946,6 @@ async function getMyAttendanceDay({
   if (empCode && employee.emp_code !== empCode) {
     throw new Error("Employee identity mismatch");
   }
-
-  // PUNCHES
 
   const punches = await getPunchesForDate(
     employee,
@@ -821,11 +962,7 @@ async function getMyAttendanceDay({
     duplicateWindow
   );
 
-  // SESSIONS
-
   const calculatedSessions = buildSessions(cleanedPunches);
-
-  // EXISTING SUMMARY
 
   const summary = await knex("day_summaries")
     .where({
@@ -833,8 +970,6 @@ async function getMyAttendanceDay({
       work_date: validatedDate,
     })
     .first();
-
-  // EXISTING DERIVED SESSIONS
 
   const sessions = await knex("attendance_sessions")
     .select(
@@ -852,21 +987,42 @@ async function getMyAttendanceDay({
     })
     .orderBy("in_at", "asc");
 
-  // LEAVE
-
   const leave = await getApprovedLeaveForDate(
     userId,
     validatedDate
   );
-
-  // PERMISSIONS
 
   const permissions = await getApprovedPermissionsForDate(
     userId,
     validatedDate
   );
 
-  // BREAK GAPS
+  // GET LATEST LOP ADJUSTMENT
+  const nextDate = new Date(
+    `${validatedDate}T00:00:00Z`
+  );
+
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+
+  const endExclusive = nextDate.toISOString().slice(0, 10);
+
+  const adjustmentMap = await getLatestLopAdjustments({
+    userId,
+    startDate: validatedDate,
+    endExclusive,
+  });
+
+  // IMPORTANT: Single-day map key = userId
+  const adjustment =
+    adjustmentMap.get(String(userId)) || null;
+
+  const formattedSummary = summary
+    ? {
+        ...summary,
+        work_date: validatedDate,
+        ...formatLopDetails(summary, adjustment),
+      }
+    : null;
 
   const breakGaps = [];
 
@@ -901,7 +1057,6 @@ async function getMyAttendanceDay({
 
   return {
     success: true,
-
     data: {
       employee: {
         id: employee.id,
@@ -909,43 +1064,27 @@ async function getMyAttendanceDay({
         name: employee.name,
         designation: employee.designation,
       },
-
       date: validatedDate,
-
-      summary: summary || null,
-
+      summary: formattedSummary,
       sessions,
-
       punches: cleanedPunches,
-
       break_gaps: breakGaps,
-
       flags: {
         needs_regularization: summary
           ? summary.needs_regularization
           : calculatedSessions.some(
               (session) => session.flag
             ),
-
-        is_late: summary
-          ? summary.is_late
-          : false,
-
-        excess_break: summary
-          ? summary.excess_break
-          : false,
-
-        is_locked: summary
-          ? summary.is_locked
-          : false,
+        is_late: summary ? summary.is_late : false,
+        excess_break: summary ? summary.excess_break : false,
+        is_locked: summary ? summary.is_locked : false,
       },
-
       leave,
-
       permissions,
     },
   };
 }
+
 
 // =====================================================
 // ADMIN - GET DAILY ATTENDANCE
@@ -954,7 +1093,17 @@ async function getMyAttendanceDay({
 async function getAdminDailyAttendance({ date }) {
   const validatedDate = validateDate(date);
 
-  // EMPLOYEES
+  const nextDate = new Date(
+    `${validatedDate}T00:00:00Z`
+  );
+
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+
+  const endExclusive = nextDate.toISOString().slice(0, 10);
+
+  // ---------------------------------------------------
+  // GET EMPLOYEES
+  // ---------------------------------------------------
 
   const employees = await knex("users")
     .select(
@@ -970,7 +1119,9 @@ async function getAdminDailyAttendance({ date }) {
     })
     .orderBy("name", "asc");
 
-  // SUMMARIES
+  // ---------------------------------------------------
+  // GET DAY SUMMARIES
+  // ---------------------------------------------------
 
   const summaries = await knex("day_summaries")
     .where({
@@ -984,7 +1135,18 @@ async function getAdminDailyAttendance({ date }) {
     ])
   );
 
-  // RAW PUNCHES
+  // ---------------------------------------------------
+  // GET LATEST LOP ADJUSTMENTS
+  // ---------------------------------------------------
+
+  const lopAdjustments = await getLatestLopAdjustments({
+    startDate: validatedDate,
+    endExclusive,
+  });
+
+  // ---------------------------------------------------
+  // GET RAW PUNCHES
+  // ---------------------------------------------------
 
   const rawPunches = await knex("raw_punches")
     .select(
@@ -1000,11 +1162,13 @@ async function getAdminDailyAttendance({ date }) {
     .where(
       "punched_at",
       "<",
-      `${validatedDate} 23:59:59.999`
+      `${endExclusive} 00:00:00`
     )
     .orderBy("punched_at", "asc");
 
-  // CORRECTIONS
+  // ---------------------------------------------------
+  // GET VALID CORRECTION PUNCHES
+  // ---------------------------------------------------
 
   const corrections = await knex("correction_punches")
     .select(
@@ -1023,11 +1187,13 @@ async function getAdminDailyAttendance({ date }) {
     .where(
       "punched_at",
       "<",
-      `${validatedDate} 23:59:59.999`
+      `${endExclusive} 00:00:00`
     )
     .orderBy("punched_at", "asc");
 
-  // RAW MAP
+  // ---------------------------------------------------
+  // GROUP RAW PUNCHES
+  // ---------------------------------------------------
 
   const rawMap = new Map();
 
@@ -1039,7 +1205,9 @@ async function getAdminDailyAttendance({ date }) {
     rawMap.get(punch.emp_code).push(punch);
   }
 
-  // CORRECTION MAP
+  // ---------------------------------------------------
+  // GROUP CORRECTION PUNCHES
+  // ---------------------------------------------------
 
   const correctionMap = new Map();
 
@@ -1053,7 +1221,9 @@ async function getAdminDailyAttendance({ date }) {
     correctionMap.get(key).push(punch);
   }
 
-  // BUILD BOARD
+  // ---------------------------------------------------
+  // BUILD EMPLOYEE ATTENDANCE
+  // ---------------------------------------------------
 
   const data = employees.map((employee) => {
     const summary =
@@ -1074,11 +1244,19 @@ async function getAdminDailyAttendance({ date }) {
         new Date(b.punched_at)
     );
 
+    // -------------------------------------------------
+    // FIRST IN
+    // -------------------------------------------------
+
     const firstIn =
       punches.find(
         (punch) =>
           punch.direction === DIRECTIONS.IN
       ) || null;
+
+    // -------------------------------------------------
+    // LAST OUT
+    // -------------------------------------------------
 
     const lastOut =
       [...punches]
@@ -1087,6 +1265,10 @@ async function getAdminDailyAttendance({ date }) {
           (punch) =>
             punch.direction === DIRECTIONS.OUT
         ) || null;
+
+    // -------------------------------------------------
+    // LIVE STATUS
+    // -------------------------------------------------
 
     let liveStatus = "OUT";
 
@@ -1100,6 +1282,39 @@ async function getAdminDailyAttendance({ date }) {
     ) {
       liveStatus = "IN";
     }
+
+    // -------------------------------------------------
+    // LOP CALCULATION
+    // -------------------------------------------------
+
+    const calculatedLop = summary
+      ? Number(summary.lop_value || 0)
+      : 0;
+
+    const adjustment =
+      lopAdjustments.get(String(employee.id)) || null;
+
+    // Apply manual adjustment only to current ABSENT status.
+    const isAdjustmentApplicable =
+      Boolean(
+        summary &&
+        summary.status === STATUS.ABSENT &&
+        adjustment
+      );
+
+    const adjustedLopValue =
+      isAdjustmentApplicable
+        ? Number(adjustment.new_lop)
+        : null;
+
+    const finalLopValue =
+      isAdjustmentApplicable
+        ? adjustedLopValue
+        : calculatedLop;
+
+    // -------------------------------------------------
+    // RESPONSE
+    // -------------------------------------------------
 
     return {
       user_id: employee.id,
@@ -1129,6 +1344,23 @@ async function getAdminDailyAttendance({ date }) {
         ? Number(summary.work_min || 0)
         : 0,
 
+      calculated_lop_value: calculatedLop,
+
+      adjusted_lop_value: adjustedLopValue,
+
+      lop_value: finalLopValue,
+
+      lop_adjustment: isAdjustmentApplicable
+        ? {
+            id: adjustment.id,
+            previous_lop: Number(adjustment.previous_lop),
+            new_lop: Number(adjustment.new_lop),
+            reason: adjustment.reason,
+            created_by: adjustment.created_by,
+            created_at: adjustment.created_at,
+          }
+        : null,
+
       flags: {
         is_late: summary
           ? summary.is_late
@@ -1149,6 +1381,10 @@ async function getAdminDailyAttendance({ date }) {
     };
   });
 
+  // ---------------------------------------------------
+  // RETURN RESPONSE
+  // ---------------------------------------------------
+
   return {
     success: true,
 
@@ -1158,24 +1394,6 @@ async function getAdminDailyAttendance({ date }) {
       total: data.length,
     },
   };
-}
-
-// =====================================================
-// HELPER - NORMALIZE DATE KEY
-// =====================================================
-
-function normalizeDateKey(value) {
-  if (!value) return null;
-
-  if (value instanceof Date) {
-    return [
-      value.getFullYear(),
-      String(value.getMonth() + 1).padStart(2, "0"),
-      String(value.getDate()).padStart(2, "0"),
-    ].join("-");
-  }
-
-  return String(value).slice(0, 10);
 }
 
 // =====================================================
@@ -1197,8 +1415,6 @@ async function getAdminMonthlyAttendance({
     validated.year,
     validated.month
   );
-
-  // GET IST DATE KEY
 
   const getISTDateKey = (value) => {
     if (!value) return null;
@@ -1228,7 +1444,15 @@ async function getAdminMonthlyAttendance({
     ])
   );
 
-  // 2. ATTENDANCE SESSIONS
+  // 2. LATEST LOP ADJUSTMENTS
+
+  const adjustmentMap = await getLatestLopAdjustments({
+    userId: validatedUserId,
+    startDate,
+    endExclusive,
+  });
+
+  // 3. ATTENDANCE SESSIONS
 
   const sessions = await knex("attendance_sessions")
     .where({
@@ -1251,7 +1475,7 @@ async function getAdminMonthlyAttendance({
     sessionsMap.get(date).push(session);
   }
 
-  // 3. RAW PUNCHES
+  // 4. RAW PUNCHES
 
   const rawPunches = await knex("raw_punches")
     .where({
@@ -1277,7 +1501,7 @@ async function getAdminMonthlyAttendance({
     });
   }
 
-  // 4. CORRECTION PUNCHES
+  // 5. CORRECTION PUNCHES
 
   const corrections = await knex("correction_punches")
     .select(
@@ -1323,7 +1547,7 @@ async function getAdminMonthlyAttendance({
     });
   }
 
-  // 5. LEAVES
+  // 6. LEAVES
 
   const leaves = await knex("leave_requests")
     .where({
@@ -1333,7 +1557,7 @@ async function getAdminMonthlyAttendance({
     .where("to_date", ">=", startDate)
     .orderBy("from_date", "asc");
 
-  // 6. PERMISSIONS
+  // 7. PERMISSIONS
 
   const permissions = await knex("permission_requests")
     .where({
@@ -1344,7 +1568,7 @@ async function getAdminMonthlyAttendance({
     .orderBy("perm_date", "asc")
     .orderBy("start_time", "asc");
 
-  // 7. BUILD DAILY ATTENDANCE RESPONSE
+  // 8. BUILD DAILY ATTENDANCE RESPONSE
 
   const days = [];
 
@@ -1372,10 +1596,22 @@ async function getAdminMonthlyAttendance({
         new Date(b.punched_at).getTime()
     );
 
+    const adjustment = adjustmentMap.get(date) || null;
+
+    const lopDetails = daySummary
+      ? formatLopDetails(daySummary, adjustment)
+      : {
+          calculated_lop_value: 0,
+          adjusted_lop_value: null,
+          lop_value: 0,
+          lop_adjustment: null,
+        };
+
     const formattedSummary = daySummary
       ? {
           ...daySummary,
           work_date: date,
+          ...lopDetails,
         }
       : null;
 
@@ -1402,6 +1638,20 @@ async function getAdminMonthlyAttendance({
       date,
 
       summary: formattedSummary,
+
+      // Also provide LOP values at day level.
+
+      calculated_lop_value:
+        lopDetails.calculated_lop_value,
+
+      adjusted_lop_value:
+        lopDetails.adjusted_lop_value,
+
+      lop_value:
+        lopDetails.lop_value,
+
+      lop_adjustment:
+        lopDetails.lop_adjustment,
 
       punches: allPunches,
 
@@ -1437,7 +1687,7 @@ async function getAdminMonthlyAttendance({
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
-  // 8. MONTHLY TOTALS
+  // 9. MONTHLY TOTALS
 
   const totals = {
     present: 0,
@@ -1450,10 +1700,19 @@ async function getAdminMonthlyAttendance({
     late_count: 0,
     work_minutes: 0,
     work_hours: 0,
+
+    calculated_lop: 0,
+    lop_adjustment: 0,
     lop_value: 0,
   };
 
-  for (const summary of summaries) {
+  for (const day of days) {
+    const summary = day.summary;
+
+    if (!summary) {
+      continue;
+    }
+
     switch (summary.status) {
       case STATUS.PRESENT:
         totals.present++;
@@ -1492,16 +1751,36 @@ async function getAdminMonthlyAttendance({
       summary.work_min || 0
     );
 
-    totals.lop_value += Number(
-      summary.lop_value || 0
+    totals.calculated_lop += Number(
+      day.calculated_lop_value || 0
     );
+
+    totals.lop_value += Number(
+      day.lop_value || 0
+    );
+
+    totals.lop_adjustment +=
+      Number(day.lop_value || 0) -
+      Number(day.calculated_lop_value || 0);
   }
 
   totals.work_hours = Number(
     (totals.work_minutes / 60).toFixed(2)
   );
 
-  // 9. RESPONSE
+  totals.calculated_lop = Number(
+    totals.calculated_lop.toFixed(2)
+  );
+
+  totals.lop_adjustment = Number(
+    totals.lop_adjustment.toFixed(2)
+  );
+
+  totals.lop_value = Number(
+    totals.lop_value.toFixed(2)
+  );
+
+  // 10. RESPONSE
 
   return {
     success: true,
@@ -1530,6 +1809,227 @@ async function getAdminMonthlyAttendance({
 }
 
 // =====================================================
+// ADMIN - ADJUST ATTENDANCE LOP
+// =====================================================
+
+async function adjustAttendanceLop({
+  actorId,
+  userId,
+  workDate,
+  newLop,
+  reason,
+}) {
+  const validatedUserId = validateUserId(userId);
+
+  const validatedDate = validateDate(workDate);
+
+  // ===================================================
+  // VALIDATE NEW LOP
+  // ===================================================
+
+  const lopValue = Number(newLop);
+
+  if (
+    !Number.isFinite(lopValue) ||
+    lopValue < 0 ||
+    lopValue > MAX_LOP_VALUE ||
+    !Number.isInteger(lopValue / LOP_STEP)
+  ) {
+    throw new Error(
+      "LOP must be between 0 and 2 in increments of 0.5"
+    );
+  }
+
+  // ===================================================
+  // VALIDATE REASON
+  // ===================================================
+
+  if (!reason || !String(reason).trim()) {
+    throw new Error("Reason is required");
+  }
+
+  const cleanReason = String(reason).trim();
+
+  // ===================================================
+  // TRANSACTION
+  // ===================================================
+
+  return knex.transaction(async (trx) => {
+    // LOCK AND VALIDATE ADMIN
+
+    const actor = await trx("users")
+      .where({
+        id: actorId,
+      })
+      .forUpdate()
+      .first();
+
+    if (!actor) {
+      throw new Error("Admin user not found");
+    }
+
+    if (actor.role !== "ADMIN") {
+      throw new Error("Only admin can adjust attendance LOP");
+    }
+
+    // LOCK EMPLOYEE
+
+    const employee = await trx("users")
+      .select(
+        "id",
+        "emp_code",
+        "name",
+        "email",
+        "role",
+        "status"
+      )
+      .where({
+        id: validatedUserId,
+      })
+      .forUpdate()
+      .first();
+
+    if (!employee) {
+      throw new Error("Employee not found");
+    }
+
+    if (employee.role !== "EMPLOYEE") {
+      throw new Error("Invalid employee");
+    }
+
+    // LOCK DAY SUMMARY
+
+    const summary = await trx("day_summaries")
+      .where({
+        user_id: validatedUserId,
+        work_date: validatedDate,
+      })
+      .forUpdate()
+      .first();
+
+    if (!summary) {
+      throw new Error(
+        "Attendance summary not found for this date"
+      );
+    }
+
+    // CHECK MONTH LOCK
+
+    if (summary.is_locked) {
+      throw new Error("MONTH_LOCKED");
+    }
+
+    // ONLY ABSENT DAYS CAN BE ADJUSTED
+
+    if (summary.status !== STATUS.ABSENT) {
+      throw new Error(
+        "LOP adjustment is allowed only for ABSENT days"
+      );
+    }
+
+    // GET PREVIOUS LATEST ADJUSTMENT
+
+    const previousAdjustment = await trx(
+      "attendance_lop_adjustments"
+    )
+      .where({
+        user_id: validatedUserId,
+        work_date: validatedDate,
+      })
+      .orderBy("id", "desc")
+      .first();
+
+    const calculatedLop = Number(summary.lop_value || 0);
+
+    const previousLop = previousAdjustment
+      ? Number(previousAdjustment.new_lop)
+      : calculatedLop;
+
+    if (previousLop === lopValue) {
+      throw new Error(
+        "New LOP is the same as the current LOP"
+      );
+    }
+
+    // =================================================
+    // INSERT ADJUSTMENT HISTORY
+    // =================================================
+
+    const inserted = await trx(
+      "attendance_lop_adjustments"
+    )
+      .insert({
+        user_id: validatedUserId,
+        work_date: validatedDate,
+        previous_lop: previousLop,
+        new_lop: lopValue,
+        reason: cleanReason,
+        created_by: actorId,
+      })
+      .returning("*");
+
+    const adjustment = inserted[0];
+
+    // =================================================
+    // AUDIT LOG
+    // =================================================
+
+    await trx("audit_log").insert({
+      actor_id: actorId,
+
+      action: "ATTENDANCE_LOP_ADJUSTED",
+
+      entity_type: "attendance_lop_adjustment",
+
+      entity_id: adjustment.id,
+
+      before: {
+        calculated_lop: calculatedLop,
+        previous_lop: previousLop,
+      },
+
+      after: {
+        calculated_lop: calculatedLop,
+        final_lop: lopValue,
+        adjustment,
+      },
+
+      reason: cleanReason,
+    });
+
+    // =================================================
+    // RESPONSE
+    // =================================================
+
+    return {
+      success: true,
+
+      message: "Attendance LOP adjusted successfully",
+
+      data: {
+        employee: {
+          id: employee.id,
+          emp_code: employee.emp_code,
+          name: employee.name,
+        },
+
+        work_date: validatedDate,
+
+        status: summary.status,
+
+        calculated_lop: calculatedLop,
+
+        previous_lop: previousLop,
+
+        final_lop: lopValue,
+
+        adjustment,
+      },
+    };
+  });
+}
+
+// =====================================================
 // ADMIN - ADD ATTENDANCE CORRECTION
 // =====================================================
 
@@ -1541,8 +2041,6 @@ async function addAttendanceCorrection({
   reason,
 }) {
   const validatedUserId = validateUserId(userId);
-
-  // BASIC VALIDATION
 
   if (!punchedAt) {
     throw new Error(
@@ -1563,8 +2061,6 @@ async function addAttendanceCorrection({
     throw new Error("Reason is required");
   }
 
-  // VALIDATE ACTOR
-
   const actor = await knex("users")
     .where({
       id: actorId,
@@ -1575,11 +2071,7 @@ async function addAttendanceCorrection({
     throw new Error("Admin user not found");
   }
 
-  // VALIDATE EMPLOYEE
-
   const employee = await getEmployee(validatedUserId);
-
-  // VALIDATE PUNCHED AT
 
   const punchedDate = new Date(punchedAt);
 
@@ -1589,12 +2081,7 @@ async function addAttendanceCorrection({
 
   const workDate = punchedDate.toISOString().slice(0, 10);
 
-  // TRANSACTION
-
   return knex.transaction(async (trx) => {
-
-    // CHECK LOCK
-
     const summary = await trx("day_summaries")
       .where({
         user_id: validatedUserId,
@@ -1605,8 +2092,6 @@ async function addAttendanceCorrection({
     if (summary && summary.is_locked) {
       throw new Error("MONTH_LOCKED");
     }
-
-    // INSERT CORRECTION
 
     const inserted = await trx("correction_punches")
       .insert({
@@ -1623,15 +2108,11 @@ async function addAttendanceCorrection({
 
     const correction = inserted[0];
 
-    // RECOMPUTE ATTENDANCE
-
     await recomputeDay(
       validatedUserId,
       workDate,
       trx
     );
-
-    // UPDATED SUMMARY
 
     const updatedSummary = await trx("day_summaries")
       .where({
@@ -1639,8 +2120,6 @@ async function addAttendanceCorrection({
         work_date: workDate,
       })
       .first();
-
-    // AUDIT
 
     await trx("audit_log").insert({
       actor_id: actorId,
@@ -1654,8 +2133,6 @@ async function addAttendanceCorrection({
       },
       reason: String(reason).trim(),
     });
-
-    // NOTIFY EMPLOYEE
 
     await notifyUser(trx, {
       userId: validatedUserId,
@@ -1684,8 +2161,6 @@ async function addAttendanceCorrection({
       },
     });
 
-    // RESPONSE
-
     return {
       success: true,
 
@@ -1708,9 +2183,6 @@ async function voidAttendanceCorrection({
   correctionId,
   reason,
 }) {
-
-  // VALIDATE CORRECTION ID
-
   if (
     correctionId === undefined ||
     correctionId === null ||
@@ -1728,15 +2200,11 @@ async function voidAttendanceCorrection({
     throw new Error("Invalid correction ID");
   }
 
-  // VALIDATE REASON
-
   if (!reason || !String(reason).trim()) {
     throw new Error("Reason is required");
   }
 
   const cleanReason = String(reason).trim();
-
-  // VALIDATE ACTOR
 
   const actor = await knex("users")
     .where({
@@ -1748,12 +2216,7 @@ async function voidAttendanceCorrection({
     throw new Error("Admin user not found");
   }
 
-  // TRANSACTION
-
   return knex.transaction(async (trx) => {
-
-    // FIND AND LOCK CORRECTION
-
     const correction = await trx("correction_punches")
       .where({
         id: parsedCorrectionId,
@@ -1765,13 +2228,9 @@ async function voidAttendanceCorrection({
       throw new Error("Correction not found");
     }
 
-    // ALREADY VOIDED?
-
     if (correction.is_voided) {
       throw new Error("Correction already voided");
     }
-
-    // DETERMINE WORK DATE
 
     const punchedDate = new Date(
       correction.punched_at
@@ -1782,8 +2241,6 @@ async function voidAttendanceCorrection({
     }
 
     const workDate = punchedDate.toISOString().slice(0, 10);
-
-    // CHECK MONTH LOCK
 
     const existingSummary = await trx("day_summaries")
       .where({
@@ -1799,20 +2256,14 @@ async function voidAttendanceCorrection({
       throw new Error("MONTH_LOCKED");
     }
 
-    // GET EMPLOYEE
-
     const employee = await getEmployee(
       correction.user_id,
       trx
     );
 
-    // SAVE BEFORE STATE FOR AUDIT
-
     const beforeCorrection = {
       ...correction,
     };
-
-    // VOID CORRECTION
 
     await trx("correction_punches")
       .where({
@@ -1822,15 +2273,11 @@ async function voidAttendanceCorrection({
         is_voided: true,
       });
 
-    // GET UPDATED CORRECTION
-
     const updatedCorrection = await trx("correction_punches")
       .where({
         id: parsedCorrectionId,
       })
       .first();
-
-    // RECOMPUTE ATTENDANCE
 
     await recomputeDay(
       correction.user_id,
@@ -1838,16 +2285,12 @@ async function voidAttendanceCorrection({
       trx
     );
 
-    // GET UPDATED SUMMARY
-
     const updatedSummary = await trx("day_summaries")
       .where({
         user_id: correction.user_id,
         work_date: workDate,
       })
       .first();
-
-    // AUDIT
 
     await trx("audit_log").insert({
       actor_id: actorId,
@@ -1864,8 +2307,6 @@ async function voidAttendanceCorrection({
 
       reason: cleanReason,
     });
-
-    // NOTIFY EMPLOYEE
 
     await notifyUser(trx, {
       userId: correction.user_id,
@@ -1897,8 +2338,6 @@ async function voidAttendanceCorrection({
       },
     });
 
-    // RESPONSE
-
     return {
       success: true,
 
@@ -1918,10 +2357,17 @@ async function voidAttendanceCorrection({
 
 module.exports = {
   recomputeDay,
+
   getMyAttendance,
   getMyAttendanceDay,
+
   getAdminDailyAttendance,
   getAdminMonthlyAttendance,
+
+  adjustAttendanceLop,
+
   addAttendanceCorrection,
   voidAttendanceCorrection,
+getFinalLopValue,
+  getLatestLopAdjustments,
 };
