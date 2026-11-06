@@ -21,11 +21,75 @@ async function getMyLeaveBalance(req, res) {
 }
 
 // LEAVE APPLY FOR EMPLOYEE
+// async function applyMyLeave(req, res) {
+//   try {
+//     const userId = req.user.id;
+
+//     const { from_date, to_date, reason } = req.body;
+
+//     const result = await leaveService.applyMyLeave({
+//       userId,
+//       fromDate: from_date,
+//       toDate: to_date,
+//       reason
+//     });
+
+//     return res.status(201).json(result);
+//   } catch (error) {
+//     console.error('Apply leave error:', error);
+
+//     if (
+//       error.code === 'INVALID_DATE_RANGE' ||
+//       error.code === 'INVALID_REASON' ||
+//       error.code === 'NO_LEAVE_DAYS'
+//     ) {
+//       return res.status(400).json({
+//         success: false,
+//         error: error.code,
+//         message: error.message
+//       });
+//     }
+
+//     if (error.code === 'INSUFFICIENT_BALANCE') {
+//       return res.status(400).json({
+//         success: false,
+//         error: error.code,
+//         message: error.message,
+//         data: {
+//           available_balance: error.availableBalance,
+//           requested_days: error.requestedDays
+//         }
+//       });
+//     }
+
+//     // NEW: MONTHLY LEAVE LIMIT
+//     if (error.code === 'MONTHLY_LEAVE_LIMIT_EXCEEDED') {
+//       return res.status(400).json({
+//         success: false,
+//         error: error.code,
+//         message: error.message,
+//         data: {
+//           monthly_usage: error.monthlyUsage
+//         }
+//       });
+//     }
+
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Internal server error while applying leave'
+//     });
+//   }
+// }
+
 async function applyMyLeave(req, res) {
   try {
     const userId = req.user.id;
 
-    const { from_date, to_date, reason } = req.body;
+    const {
+      from_date,
+      to_date,
+      reason
+    } = req.body;
 
     const result = await leaveService.applyMyLeave({
       userId,
@@ -35,13 +99,14 @@ async function applyMyLeave(req, res) {
     });
 
     return res.status(201).json(result);
+
   } catch (error) {
-    console.error('Apply leave error:', error);
+    console.error("Apply leave error:", error);
 
     if (
-      error.code === 'INVALID_DATE_RANGE' ||
-      error.code === 'INVALID_REASON' ||
-      error.code === 'NO_LEAVE_DAYS'
+      error.code === "INVALID_DATE_RANGE" ||
+      error.code === "INVALID_REASON" ||
+      error.code === "NO_LEAVE_DAYS"
     ) {
       return res.status(400).json({
         success: false,
@@ -50,7 +115,7 @@ async function applyMyLeave(req, res) {
       });
     }
 
-    if (error.code === 'INSUFFICIENT_BALANCE') {
+    if (error.code === "INSUFFICIENT_BALANCE") {
       return res.status(400).json({
         success: false,
         error: error.code,
@@ -62,12 +127,43 @@ async function applyMyLeave(req, res) {
       });
     }
 
+    if (error.code === "MONTHLY_LEAVE_LIMIT_EXCEEDED") {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message,
+        data: {
+          monthly_usage: error.monthlyUsage
+        }
+      });
+    }
+
+    if (error.code === "LEAVE_DATE_CONFLICT") {
+      return res.status(409).json({
+        success: false,
+        error: error.code,
+        message: error.message,
+        data: {
+          conflicting_request: error.conflictingRequest
+        }
+      });
+    }
+
+    if (error.code === "EMPLOYEE_NOT_FOUND") {
+      return res.status(404).json({
+        success: false,
+        error: error.code,
+        message: error.message
+      });
+    }
+
     return res.status(500).json({
       success: false,
-      message: 'Internal server error while applying leave'
+      message: "Internal server error while applying leave"
     });
   }
 }
+
 
 // CANCEL LEAVE REQUEST
 async function cancelMyLeave(req, res) {
@@ -210,6 +306,18 @@ async function decideAdminLeave(req, res) {
         data: {
           available_balance: error.availableBalance,
           requested_days: error.requestedDays
+        }
+      });
+    }
+
+    // NEW: MONTHLY LEAVE LIMIT
+    if (error.code === 'MONTHLY_LEAVE_LIMIT_EXCEEDED') {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message,
+        data: {
+          monthly_usage: error.monthlyUsage
         }
       });
     }

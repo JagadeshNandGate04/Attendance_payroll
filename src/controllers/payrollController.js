@@ -1,9 +1,8 @@
 
 const payrollService = require('../services/PayrollService');
 
-// =====================================================
 // CREATE PAYROLL RUN
-// =====================================================
+
 
 async function createPayrollRun(req, res) {
   try {
@@ -77,9 +76,9 @@ async function createPayrollRun(req, res) {
   }
 }
 
-// =====================================================
+
 // GET PAYROLL RUNS
-// =====================================================
+
 
 async function getPayrollRuns(req, res) {
   try {
@@ -107,9 +106,9 @@ async function getPayrollRuns(req, res) {
   }
 }
 
-// =====================================================
+
 // GET PAYROLL RUN DETAILS
-// =====================================================
+
 
 async function getPayrollRunById(req, res) {
   try {
@@ -147,9 +146,9 @@ async function getPayrollRunById(req, res) {
   }
 }
 
-// =====================================================
+
 // UPDATE PAYROLL ITEM
-// =====================================================
+
 
 async function updatePayrollItem(req, res) {
   try {
@@ -206,9 +205,9 @@ async function updatePayrollItem(req, res) {
   }
 }
 
-// =====================================================
+
 // RECOMPUTE PAYROLL RUN
-// =====================================================
+
 
 async function recomputePayrollRun(req, res) {
   try {
@@ -251,9 +250,9 @@ async function recomputePayrollRun(req, res) {
   }
 }
 
-// =====================================================
+
 // FINALIZE PAYROLL RUN
-// =====================================================
+
 
 async function finalizePayrollRun(req, res) {
   try {
@@ -296,9 +295,9 @@ async function finalizePayrollRun(req, res) {
   }
 }
 
-// =====================================================
+
 // EXPORT PAYROLL RUN
-// =====================================================
+
 
 async function exportPayrollRun(req, res) {
   try {
@@ -348,9 +347,8 @@ async function exportPayrollRun(req, res) {
   }
 }
 
-// =====================================================
 // GET MY PAYSLIPS
-// =====================================================
+
 
 async function getMyPayslips(req, res) {
   try {
@@ -372,9 +370,8 @@ async function getMyPayslips(req, res) {
   }
 }
 
-// =====================================================
 // DOWNLOAD MY PAYSLIP
-// =====================================================
+
 
 async function downloadMyPayslip(req, res) {
   try {
@@ -424,9 +421,7 @@ async function downloadMyPayslip(req, res) {
   }
 }
 
-// =====================================================
 // EXPORTS
-// =====================================================
 
 module.exports = {
   createPayrollRun,

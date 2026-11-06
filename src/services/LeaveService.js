@@ -1,9 +1,196 @@
 const knex = require("../config/database");
 const formatDateOnly = require("../utils/dateHelpers").formatDateOnly;
 
-// ==========================================================
+const MONTHLY_LEAVE_LIMIT = 3;
+const APP_TIMEZONE = process.env.TIMEZONE || "Asia/Kolkata";
+
+function getLocalDateString(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+
+  const values = {};
+  for (const part of parts) {
+    if (part.type !== "literal") values[part.type] = part.value;
+  }
+
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function calculateWorkingDaysByMonth(fromDate, toDate, weeklyOffDays, holidayDates = []) {
+  const holidaySet = new Set(holidayDates);
+  const result = {};
+  const current = new Date(`${fromDate}T00:00:00Z`);
+  const end = new Date(`${toDate}T00:00:00Z`);
+
+  while (current <= end) {
+    const dateString = current.toISOString().slice(0, 10);
+    const monthKey = dateString.slice(0, 7);
+    const isWeeklyOff = weeklyOffDays.includes(current.getUTCDay());
+    const isHoliday = holidaySet.has(dateString);
+
+    if (!isWeeklyOff && !isHoliday) {
+      result[monthKey] = (result[monthKey] || 0) + 1;
+    }
+
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  return result;
+}
+
+async function getWeeklyOffDays(trx) {
+  const setting = await trx("settings")
+    .where({ key: "weekly_off_days" })
+    .first();
+
+  let days = setting?.value;
+
+  if (typeof days === "string") {
+    try {
+      days = JSON.parse(days);
+    } catch (error) {
+      days = null;
+    }
+  }
+
+  return Array.isArray(days) ? days.map(Number) : [0, 6];
+}
+
+// async function getMonthlyLeaveUsage(trx, userId, {
+//   excludeRequestId = null,
+//   weeklyOffDays = [0, 6]
+// } = {}) {
+//   const usage = {};
+
+//   // Approved leave is represented by LEAVE day summaries on the actual leave dates.
+//   const approved = await trx("day_summaries")
+//     .select(
+//       trx.raw("TO_CHAR(work_date, 'YYYY-MM') AS month"),
+//       trx.raw("COUNT(*)::int AS days")
+//     )
+//     .where({ user_id: userId, status: "LEAVE" })
+//     .groupByRaw("TO_CHAR(work_date, 'YYYY-MM')");
+
+//   for (const row of approved) {
+//     usage[row.month] = Number(row.days || 0);
+//   }
+
+//   // Pending requests reserve days in the calendar month(s) in which leave is taken.
+//   let pendingQuery = trx("leave_requests")
+//     .select(
+//       "id",
+//       trx.raw("from_date::text AS from_date"),
+//       trx.raw("to_date::text AS to_date")
+//     )
+//     .where({ user_id: userId, status: "PENDING" });
+
+//   if (excludeRequestId !== null) {
+//     pendingQuery = pendingQuery.whereNot("id", excludeRequestId);
+//   }
+
+//   const pendingRequests = await pendingQuery;
+
+//   for (const request of pendingRequests) {
+//     const holidays = await trx("holidays")
+//       .select(trx.raw("holiday_date::text AS holiday_date"))
+//       .whereBetween("holiday_date", [request.from_date, request.to_date]);
+
+//     const breakdown = calculateWorkingDaysByMonth(
+//       request.from_date,
+//       request.to_date,
+//       weeklyOffDays,
+//       holidays.map((item) => item.holiday_date)
+//     );
+
+//     for (const [month, days] of Object.entries(breakdown)) {
+//       usage[month] = (usage[month] || 0) + days;
+//     }
+//   }
+
+//   return usage;
+// }
+
+
+async function getMonthlyLeaveUsage(trx, userId, {
+  excludeRequestId = null,
+  weeklyOffDays = [0, 6]
+} = {}) {
+  const usage = {};
+
+  // Count both approved and pending leave requests.
+  const query = trx("leave_requests")
+    .select(
+      "id",
+      trx.raw("from_date::text AS from_date"),
+      trx.raw("to_date::text AS to_date")
+    )
+    .where({ user_id: userId })
+    .whereIn("status", ["APPROVED", "PENDING"]);
+
+  if (excludeRequestId !== null) {
+    query.whereNot("id", excludeRequestId);
+  }
+
+  const requests = await query;
+
+  for (const request of requests) {
+    const holidays = await trx("holidays")
+      .select(trx.raw("holiday_date::text AS holiday_date"))
+      .whereBetween("holiday_date", [
+        request.from_date,
+        request.to_date
+      ]);
+
+    const breakdown = calculateWorkingDaysByMonth(
+      request.from_date,
+      request.to_date,
+      weeklyOffDays,
+      holidays.map((item) => item.holiday_date)
+    );
+
+    for (const [month, days] of Object.entries(breakdown)) {
+      usage[month] = (usage[month] || 0) + days;
+    }
+  }
+
+  return usage;
+}
+
+
+
+function validateMonthlyLeaveLimit(existingUsage, requestedBreakdown) {
+  const exceeded = [];
+
+  for (const [month, requestedDays] of Object.entries(requestedBreakdown)) {
+    const alreadyUsedOrReserved = Number(existingUsage[month] || 0);
+    const total = alreadyUsedOrReserved + Number(requestedDays || 0);
+
+    if (total > MONTHLY_LEAVE_LIMIT) {
+      exceeded.push({
+        month,
+        already_used_or_pending: alreadyUsedOrReserved,
+        requested_days: requestedDays,
+        monthly_limit: MONTHLY_LEAVE_LIMIT,
+        exceeds_by: total - MONTHLY_LEAVE_LIMIT
+      });
+    }
+  }
+
+  if (exceeded.length) {
+    const error = new Error(
+      `Employees can take a maximum of ${MONTHLY_LEAVE_LIMIT} leave days per calendar month`
+    );
+    error.code = "MONTHLY_LEAVE_LIMIT_EXCEEDED";
+    error.monthlyUsage = exceeded;
+    throw error;
+  }
+}
+
 // NOTIFICATION HELPERS
-// ==========================================================
 
 // Notify all active Admin users
 async function notifyAdmins(trx, {
@@ -59,78 +246,241 @@ async function notifyUser(trx, {
   });
 }
 
-// ==========================================================
 // GET EMPLOYEE LEAVE BALANCE
-// ==========================================================
 
 async function getMyLeaveBalance({ userId }) {
-  // Current balance
   const ledger = await knex("leave_ledger")
-    .sum({
-      balance: "delta"
-    })
-    .where({
-      user_id: userId
-    })
+    .sum({ balance: "delta" })
+    .where({ user_id: userId })
     .first();
 
   const balance = Number(ledger?.balance ?? 0);
+  const today = getLocalDateString();
+  const startDate = `${today.slice(0, 7)}-01`;
+  const [year, month] = today.split("-").map(Number);
+  const nextMonthDate = new Date(Date.UTC(year, month, 1));
+  const endDate = nextMonthDate.toISOString().slice(0, 10);
 
-  // Current month
-  const now = new Date();
-
-  const year = now.getUTCFullYear();
-  const monthIndex = now.getUTCMonth();
-
-  const startDate = new Date(
-    Date.UTC(year, monthIndex, 1)
-  )
-    .toISOString()
-    .slice(0, 10);
-
-  const endDate = new Date(
-    Date.UTC(year, monthIndex + 1, 1)
-  )
-    .toISOString()
-    .slice(0, 10);
-
-  // Leave consumed this month
-  const consumed = await knex("leave_ledger")
-    .sum({
-      days: knex.raw("ABS(COALESCE(delta, 0))")
-    })
-    .where({
-      user_id: userId,
-      type: "CONSUMED"
-    })
-    .where("entry_date", ">=", startDate)
-    .where("entry_date", "<", endDate)
+  const consumed = await knex("day_summaries")
+    .count({ days: "*" })
+    .where({ user_id: userId, status: "LEAVE" })
+    .where("work_date", ">=", startDate)
+    .where("work_date", "<", endDate)
     .first();
 
-  // Pending requests
   const pending = await knex("leave_requests")
-    .sum({
-      days: "days"
-    })
-    .where({
-      user_id: userId,
-      status: "PENDING"
-    })
+    .sum({ days: "days" })
+    .where({ user_id: userId, status: "PENDING" })
     .first();
+
+  const pendingDays = Number(pending?.days ?? 0);
 
   return {
     success: true,
     data: {
-      available_balance: balance,
+      available_balance: balance - pendingDays,
+      total_balance: balance,
       consumed_this_month: Number(consumed?.days ?? 0),
-      pending_days: Number(pending?.days ?? 0)
+      pending_days: pendingDays,
+      monthly_leave_limit: MONTHLY_LEAVE_LIMIT,
+      monthly_leave_used: Number(consumed?.days ?? 0)
     }
   };
 }
 
-// ==========================================================
 // LEAVE APPLY FOR EMPLOYEE
-// ==========================================================
+
+// async function applyMyLeave({
+//   userId,
+//   fromDate,
+//   toDate,
+//   reason
+// }) {
+//   if (!fromDate || !toDate) {
+//     const error = new Error("from_date and to_date are required");
+//     error.code = "INVALID_DATE_RANGE";
+//     throw error;
+//   }
+
+//   if (!reason || !String(reason).trim()) {
+//     const error = new Error("Leave reason is required");
+//     error.code = "INVALID_REASON";
+//     throw error;
+//   }
+
+//   const normalizedFromDate = formatDateOnly(fromDate);
+//   const normalizedToDate = formatDateOnly(toDate);
+//   const from = new Date(`${normalizedFromDate}T00:00:00Z`);
+//   const to = new Date(`${normalizedToDate}T00:00:00Z`);
+
+//   if (
+//     Number.isNaN(from.getTime()) ||
+//     Number.isNaN(to.getTime()) ||
+//     from > to
+//   ) {
+//     const error = new Error("Invalid from_date or to_date");
+//     error.code = "INVALID_DATE_RANGE";
+//     throw error;
+//   }
+
+//   const weeklyOffDays = await getWeeklyOffDays(knex);
+//   const holidays = await knex("holidays")
+//     .select(
+//       knex.raw("holiday_date::text as holiday_date"),
+//       "name"
+//     )
+//     .whereBetween("holiday_date", [normalizedFromDate, normalizedToDate]);
+
+//   const holidaySet = new Set(holidays.map((holiday) => holiday.holiday_date));
+//   const holidayNames = new Map(
+//     holidays.map((holiday) => [holiday.holiday_date, holiday.name])
+//   );
+
+//   let days = 0;
+//   const excludedDates = [];
+//   const current = new Date(from);
+
+//   while (current <= to) {
+//     const dateString = current.toISOString().slice(0, 10);
+//     const isWeeklyOff = weeklyOffDays.includes(current.getUTCDay());
+//     const isHoliday = holidaySet.has(dateString);
+
+//     if (isWeeklyOff) {
+//       excludedDates.push({ date: dateString, type: "WEEKLY_OFF" });
+//     } else if (isHoliday) {
+//       excludedDates.push({
+//         date: dateString,
+//         type: "HOLIDAY",
+//         name: holidayNames.get(dateString) || null
+//       });
+//     } else {
+//       days += 1;
+//     }
+
+//     current.setUTCDate(current.getUTCDate() + 1);
+//   }
+
+//   if (days <= 0) {
+//     const error = new Error("Selected dates contain no working days");
+//     error.code = "NO_LEAVE_DAYS";
+//     error.excludedDates = excludedDates;
+//     throw error;
+//   }
+
+//   const requestedBreakdown = calculateWorkingDaysByMonth(
+//     normalizedFromDate,
+//     normalizedToDate,
+//     weeklyOffDays,
+//     [...holidaySet]
+//   );
+
+//   const isRetroactive = normalizedFromDate < getLocalDateString();
+
+//   const transactionResult = await knex.transaction(async (trx) => {
+//     const employee = await trx("users")
+//       .select("id", "name", "emp_code")
+//       .where({ id: userId })
+//       .forUpdate()
+//       .first();
+
+//     if (!employee) {
+//       const error = new Error("Employee not found");
+//       error.code = "EMPLOYEE_NOT_FOUND";
+//       throw error;
+//     }
+
+//     const ledger = await trx("leave_ledger")
+//       .sum({ balance: "delta" })
+//       .where({ user_id: userId })
+//       .first();
+
+//     const balance = Number(ledger?.balance ?? 0);
+
+//     const pending = await trx("leave_requests")
+//       .sum({ days: "days" })
+//       .where({ user_id: userId, status: "PENDING" })
+//       .first();
+
+//     const pendingDays = Number(pending?.days ?? 0);
+//     const availableBalance = balance - pendingDays;
+
+//     if (availableBalance < days) {
+//       const error = new Error("Insufficient leave balance");
+//       error.code = "INSUFFICIENT_BALANCE";
+//       error.availableBalance = availableBalance;
+//       error.requestedDays = days;
+//       throw error;
+//     }
+
+//     const monthlyUsage = await getMonthlyLeaveUsage(trx, userId, {
+//       weeklyOffDays
+//     });
+//     validateMonthlyLeaveLimit(monthlyUsage, requestedBreakdown);
+
+//     const [request] = await trx("leave_requests")
+//       .insert({
+//         user_id: userId,
+//         from_date: normalizedFromDate,
+//         to_date: normalizedToDate,
+//         days,
+//         reason: String(reason).trim(),
+//         is_retroactive: isRetroactive,
+//         status: "PENDING"
+//       })
+//       .returning([
+//         "id",
+//         "user_id",
+//         "from_date",
+//         "to_date",
+//         "days",
+//         "reason",
+//         "is_retroactive",
+//         "status",
+//         "created_at"
+//       ]);
+
+//     await notifyAdmins(trx, {
+//       actorId: userId,
+//       type: "LEAVE_REQUEST",
+//       title: "New Leave Request",
+//       message: `${employee.name || "An employee"} submitted a leave request for ${days} day(s).`,
+//       entityType: "leave_request",
+//       entityId: request.id,
+//       data: {
+//         employee_id: userId,
+//         employee_name: employee.name || null,
+//         emp_code: employee.emp_code || null,
+//         from_date: normalizedFromDate,
+//         to_date: normalizedToDate,
+//         days
+//       }
+//     });
+
+//     return { request, balance, pendingDays, availableBalance };
+//   });
+
+//   return {
+//     success: true,
+//     message: "Leave request submitted successfully",
+//     data: {
+//       leave_request: transactionResult.request,
+//       balance: {
+//         current: transactionResult.balance,
+//         pending_reserved: transactionResult.pendingDays,
+//         available_after_reservation: transactionResult.availableBalance - days
+//       },
+//       leave_calculation: {
+//         requested_from: normalizedFromDate,
+//         requested_to: normalizedToDate,
+//         leave_days: days,
+//         monthly_breakdown: requestedBreakdown,
+//         excluded_dates: excludedDates
+//       }
+//     }
+//   };
+// }
+
+
 
 async function applyMyLeave({
   userId,
@@ -138,112 +488,97 @@ async function applyMyLeave({
   toDate,
   reason
 }) {
-  // 1. Validate required fields
+  // BASIC VALIDATION
+ 
+
   if (!fromDate || !toDate) {
     const error = new Error(
       "from_date and to_date are required"
     );
-
     error.code = "INVALID_DATE_RANGE";
     throw error;
   }
 
   if (!reason || !String(reason).trim()) {
     const error = new Error("Leave reason is required");
-
     error.code = "INVALID_REASON";
     throw error;
   }
 
-  // 2. Validate and normalize dates
   const normalizedFromDate = formatDateOnly(fromDate);
   const normalizedToDate = formatDateOnly(toDate);
 
-  const from = new Date(
-    `${normalizedFromDate}T00:00:00Z`
-  );
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
-  const to = new Date(
-    `${normalizedToDate}T00:00:00Z`
-  );
+  if (
+    !datePattern.test(normalizedFromDate) ||
+    !datePattern.test(normalizedToDate)
+  ) {
+    const error = new Error("Invalid date format");
+    error.code = "INVALID_DATE_RANGE";
+    throw error;
+  }
+
+  const from = new Date(`${normalizedFromDate}T00:00:00Z`);
+  const to = new Date(`${normalizedToDate}T00:00:00Z`);
 
   if (
     Number.isNaN(from.getTime()) ||
-    Number.isNaN(to.getTime())
+    Number.isNaN(to.getTime()) ||
+    from.toISOString().slice(0, 10) !== normalizedFromDate ||
+    to.toISOString().slice(0, 10) !== normalizedToDate ||
+    from > to
   ) {
-    const error = new Error("Invalid from_date or to_date");
-
-    error.code = "INVALID_DATE_RANGE";
-    throw error;
-  }
-
-  if (from > to) {
     const error = new Error(
-      "from_date must be before or equal to to_date"
+      "Invalid from_date or to_date"
     );
-
     error.code = "INVALID_DATE_RANGE";
     throw error;
   }
 
-  // 3. Get weekly-off configuration
-  const settings = await knex("settings")
-    .whereIn("key", ["weekly_off_days"]);
+  
+  // GET WEEKLY OFF DAYS AND HOLIDAYS
+  
 
-  const settingsMap = {};
+  const weeklyOffDays = await getWeeklyOffDays(knex);
 
-  for (const row of settings) {
-    settingsMap[row.key] = row.value;
-  }
-
-  let weeklyOffDays = settingsMap.weekly_off_days;
-
-  if (typeof weeklyOffDays === "string") {
-    try {
-      weeklyOffDays = JSON.parse(weeklyOffDays);
-    } catch (error) {
-      weeklyOffDays = null;
-    }
-  }
-
-  if (!Array.isArray(weeklyOffDays)) {
-    weeklyOffDays = [0, 6];
-  }
-
-  weeklyOffDays = weeklyOffDays.map(Number);
-
-  // 4. Get holidays between selected dates
   const holidays = await knex("holidays")
     .select(
-      knex.raw("holiday_date::text as holiday_date"),
+      knex.raw("holiday_date::text AS holiday_date"),
       "name"
     )
-    .whereBetween(
-      "holiday_date",
-      [normalizedFromDate, normalizedToDate]
-    );
+    .whereBetween("holiday_date", [
+      normalizedFromDate,
+      normalizedToDate
+    ]);
 
-  // 5. Create holiday lookup set
   const holidaySet = new Set(
     holidays.map((holiday) => holiday.holiday_date)
   );
 
-  // 6. Calculate actual leave days
+  const holidayNames = new Map(
+    holidays.map((holiday) => [
+      holiday.holiday_date,
+      holiday.name
+    ])
+  );
+
+  
+  // CALCULATE WORKING DAYS
+  
+
   let days = 0;
+
   const excludedDates = [];
 
   const current = new Date(from);
 
   while (current <= to) {
     const dateString = current.toISOString().slice(0, 10);
+
     const dayOfWeek = current.getUTCDay();
 
     const isWeeklyOff = weeklyOffDays.includes(dayOfWeek);
-
-    const holiday = holidays.find(
-      (item) => item.holiday_date === dateString
-    );
-
     const isHoliday = holidaySet.has(dateString);
 
     if (isWeeklyOff) {
@@ -255,7 +590,7 @@ async function applyMyLeave({
       excludedDates.push({
         date: dateString,
         type: "HOLIDAY",
-        name: holiday?.name || null
+        name: holidayNames.get(dateString) || null
       });
     } else {
       days += 1;
@@ -264,7 +599,6 @@ async function applyMyLeave({
     current.setUTCDate(current.getUTCDate() + 1);
   }
 
-  // 7. Ensure at least one working day exists
   if (days <= 0) {
     const error = new Error(
       "Selected dates contain no working days"
@@ -276,127 +610,219 @@ async function applyMyLeave({
     throw error;
   }
 
-  // 8. Get current leave balance
-  const ledger = await knex("leave_ledger")
-    .sum({
-      balance: "delta"
-    })
-    .where({
-      user_id: userId
-    })
-    .first();
+  
+  // MONTHLY BREAKDOWN
+  
 
-  const balance = Number(ledger?.balance ?? 0);
+  const requestedBreakdown = calculateWorkingDaysByMonth(
+    normalizedFromDate,
+    normalizedToDate,
+    weeklyOffDays,
+    [...holidaySet]
+  );
 
-  // 9. Get pending leave requests
-  const pending = await knex("leave_requests")
-    .sum({
-      days: "days"
-    })
-    .where({
-      user_id: userId,
-      status: "PENDING"
-    })
-    .first();
+  const isRetroactive =
+    normalizedFromDate < getLocalDateString();
 
-  const pendingDays = Number(pending?.days ?? 0);
+ 
+  // DATABASE TRANSACTION
+  
 
-  // 10. Calculate available balance
-  const availableBalance = balance - pendingDays;
+  const transactionResult = await knex.transaction(
+    async (trx) => {
 
-  // 11. Check sufficient balance
-  if (availableBalance < days) {
-    const error = new Error("Insufficient leave balance");
+      // Lock employee to prevent concurrent applications.
+      const employee = await trx("users")
+        .select("id", "name", "emp_code")
+        .where({ id: userId })
+        .forUpdate()
+        .first();
 
-    error.code = "INSUFFICIENT_BALANCE";
-    error.availableBalance = availableBalance;
-    error.requestedDays = days;
-
-    throw error;
-  }
-
-  // 12. Check retroactive leave
-  const today = new Date()
-    .toISOString()
-    .slice(0, 10);
-
-  const isRetroactive = normalizedFromDate < today;
-
-  // 13. Create leave request and notify admins
-  const leaveRequest = await knex.transaction(async (trx) => {
-    const [request] = await trx("leave_requests")
-      .insert({
-        user_id: userId,
-        from_date: normalizedFromDate,
-        to_date: normalizedToDate,
-        days,
-        reason: String(reason).trim(),
-        is_retroactive: isRetroactive,
-        status: "PENDING"
-      })
-      .returning([
-        "id",
-        "user_id",
-        "from_date",
-        "to_date",
-        "days",
-        "reason",
-        "is_retroactive",
-        "status",
-        "created_at"
-      ]);
-
-    const employee = await trx("users")
-      .select("name", "emp_code")
-      .where({
-        id: userId
-      })
-      .first();
-
-    await notifyAdmins(trx, {
-      actorId: userId,
-      type: "LEAVE_REQUEST",
-      title: "New Leave Request",
-      message: `${employee?.name || "An employee"} submitted a leave request for ${days} day(s).`,
-      entityType: "leave_request",
-      entityId: request.id,
-      data: {
-        employee_id: userId,
-        employee_name: employee?.name || null,
-        emp_code: employee?.emp_code || null,
-        from_date: normalizedFromDate,
-        to_date: normalizedToDate,
-        days
+      if (!employee) {
+        const error = new Error("Employee not found");
+        error.code = "EMPLOYEE_NOT_FOUND";
+        throw error;
       }
-    });
 
-    return request;
-  });
+      
+      // CHECK OVERLAPPING LEAVE REQUESTS
+      
 
-  // 14. Return response
+      const overlappingRequest = await trx("leave_requests")
+        .select(
+          "id",
+          "from_date",
+          "to_date",
+          "status"
+        )
+        .where({ user_id: userId })
+        .whereIn("status", ["PENDING", "APPROVED"])
+        .where("from_date", "<=", normalizedToDate)
+        .where("to_date", ">=", normalizedFromDate)
+        .first();
+
+      if (overlappingRequest) {
+        const error = new Error(
+          "You already have a pending or approved leave request for overlapping dates"
+        );
+
+        error.code = "LEAVE_DATE_CONFLICT";
+
+        error.conflictingRequest = {
+          id: overlappingRequest.id,
+          from_date: formatDateOnly(
+            overlappingRequest.from_date
+          ),
+          to_date: formatDateOnly(
+            overlappingRequest.to_date
+          ),
+          status: overlappingRequest.status
+        };
+
+        throw error;
+      }
+
+      
+      // CHECK TOTAL LEAVE BALANCE
+      
+
+      const ledger = await trx("leave_ledger")
+        .sum({ balance: "delta" })
+        .where({ user_id: userId })
+        .first();
+
+      const balance = Number(ledger?.balance ?? 0);
+
+      // Reserve all other pending requests.
+      const pending = await trx("leave_requests")
+        .sum({ days: "days" })
+        .where({
+          user_id: userId,
+          status: "PENDING"
+        })
+        .first();
+
+      const pendingDays = Number(
+        pending?.days ?? 0
+      );
+
+      const availableBalance = balance - pendingDays;
+
+      if (availableBalance < days) {
+        const error = new Error(
+          "Insufficient leave balance"
+        );
+
+        error.code = "INSUFFICIENT_BALANCE";
+        error.availableBalance = availableBalance;
+        error.requestedDays = days;
+
+        throw error;
+      }
+
+     
+      // CHECK MONTHLY LEAVE LIMIT
+      
+
+      const monthlyUsage = await getMonthlyLeaveUsage(
+        trx,
+        userId,
+        {
+          weeklyOffDays
+        }
+      );
+
+      validateMonthlyLeaveLimit(
+        monthlyUsage,
+        requestedBreakdown
+      );
+
+      
+      // INSERT LEAVE REQUEST
+      
+
+      const [request] = await trx("leave_requests")
+        .insert({
+          user_id: userId,
+          from_date: normalizedFromDate,
+          to_date: normalizedToDate,
+          days,
+          reason: String(reason).trim(),
+          is_retroactive: isRetroactive,
+          status: "PENDING"
+        })
+        .returning([
+          "id",
+          "user_id",
+          "from_date",
+          "to_date",
+          "days",
+          "reason",
+          "is_retroactive",
+          "status",
+          "created_at"
+        ]);
+
+      
+      // NOTIFY ADMINS
+      
+
+      await notifyAdmins(trx, {
+        actorId: userId,
+        type: "LEAVE_REQUEST",
+        title: "New Leave Request",
+        message:
+          `${employee.name || "An employee"} submitted a leave request for ${days} day(s).`,
+        entityType: "leave_request",
+        entityId: request.id,
+        data: {
+          employee_id: userId,
+          employee_name: employee.name || null,
+          emp_code: employee.emp_code || null,
+          from_date: normalizedFromDate,
+          to_date: normalizedToDate,
+          days
+        }
+      });
+
+      return {
+        request,
+        balance,
+        pendingDays,
+        availableBalance
+      };
+    }
+  );
+
+  // RESPONSE
+
   return {
     success: true,
     message: "Leave request submitted successfully",
     data: {
-      leave_request: leaveRequest,
+      leave_request: transactionResult.request,
+
       balance: {
-        current: balance,
-        pending_reserved: pendingDays,
-        available_after_reservation: availableBalance - days
+        current: transactionResult.balance,
+        pending_reserved: transactionResult.pendingDays,
+        available_after_reservation:
+          transactionResult.availableBalance - days
       },
+
       leave_calculation: {
         requested_from: normalizedFromDate,
         requested_to: normalizedToDate,
         leave_days: days,
+        monthly_breakdown: requestedBreakdown,
         excluded_dates: excludedDates
       }
     }
   };
 }
 
-// ==========================================================
+
+
 // CANCEL LEAVE REQUEST FOR EMPLOYEE
-// ==========================================================
 
 async function cancelMyLeave({
   userId,
@@ -407,7 +833,6 @@ async function cancelMyLeave({
     !Number.isInteger(Number(leaveRequestId))
   ) {
     const error = new Error("Invalid leave request ID");
-
     error.code = "INVALID_LEAVE_ID";
     throw error;
   }
@@ -423,7 +848,6 @@ async function cancelMyLeave({
 
   if (!leaveRequest) {
     const error = new Error("Leave request not found");
-
     error.code = "LEAVE_NOT_FOUND";
     throw error;
   }
@@ -435,7 +859,6 @@ async function cancelMyLeave({
 
     error.code = "LEAVE_NOT_CANCELLABLE";
     error.status = leaveRequest.status;
-
     throw error;
   }
 
@@ -471,9 +894,7 @@ async function cancelMyLeave({
   };
 }
 
-// ==========================================================
 // GET ADMIN LEAVE REQUESTS
-// ==========================================================
 
 async function getAdminLeaveRequests({
   status,
@@ -492,7 +913,6 @@ async function getAdminLeaveRequests({
     !validStatuses.includes(String(status).toUpperCase())
   ) {
     const error = new Error("Invalid leave request status");
-
     error.code = "INVALID_STATUS";
     throw error;
   }
@@ -506,7 +926,6 @@ async function getAdminLeaveRequests({
       monthNumber > 12
     ) {
       const error = new Error("Month must be between 1 and 12");
-
       error.code = "INVALID_MONTH";
       throw error;
     }
@@ -521,7 +940,6 @@ async function getAdminLeaveRequests({
       yearNumber > 2100
     ) {
       const error = new Error("Invalid year");
-
       error.code = "INVALID_YEAR";
       throw error;
     }
@@ -543,8 +961,6 @@ async function getAdminLeaveRequests({
       "lr.decision_note",
       "lr.created_at",
       "lr.updated_at",
-
-      // Employee information
       "u.emp_code",
       "u.name as employee_name",
       "u.email as employee_email",
@@ -590,9 +1006,7 @@ async function getAdminLeaveRequests({
   };
 }
 
-// ==========================================================
 // ADMIN DECIDE LEAVE REQUEST
-// ==========================================================
 
 async function decideAdminLeave({
   adminId,
@@ -600,20 +1014,17 @@ async function decideAdminLeave({
   action,
   note
 }) {
-  // Validate leave request ID
   if (
     !leaveRequestId ||
     !Number.isInteger(Number(leaveRequestId))
   ) {
     const error = new Error("Invalid leave request ID");
-
     error.code = "INVALID_LEAVE_ID";
     throw error;
   }
 
   const id = Number(leaveRequestId);
 
-  // Validate action
   const normalizedAction = String(action || "")
     .trim()
     .toUpperCase();
@@ -622,37 +1033,28 @@ async function decideAdminLeave({
     const error = new Error(
       "Action must be APPROVE or REJECT"
     );
-
     error.code = "INVALID_ACTION";
     throw error;
   }
 
-  // Validate note
   if (!note || !String(note).trim()) {
     const error = new Error("Decision note is required");
-
     error.code = "INVALID_NOTE";
     throw error;
   }
 
-  // Transaction
   const result = await knex.transaction(async (trx) => {
-    // Get and lock leave request
     const leaveRequest = await trx("leave_requests")
-      .where({
-        id
-      })
+      .where({ id })
       .forUpdate()
       .first();
 
     if (!leaveRequest) {
       const error = new Error("Leave request not found");
-
       error.code = "LEAVE_NOT_FOUND";
       throw error;
     }
 
-    // Only pending requests can be decided
     if (leaveRequest.status !== "PENDING") {
       const error = new Error(
         `Leave request cannot be decided because its current status is ${leaveRequest.status}`
@@ -660,36 +1062,30 @@ async function decideAdminLeave({
 
       error.code = "LEAVE_NOT_DECIDABLE";
       error.status = leaveRequest.status;
-
       throw error;
     }
 
-    // Normalize PostgreSQL dates
     const fromDate = formatDateOnly(leaveRequest.from_date);
     const toDate = formatDateOnly(leaveRequest.to_date);
 
-    // ======================================================
     // APPROVE
-    // ======================================================
 
     if (normalizedAction === "APPROVE") {
-      // Current ledger balance
+      // Lock employee row to prevent concurrent leave applications.
+      await trx("users")
+        .where({ id: leaveRequest.user_id })
+        .forUpdate()
+        .first("id");
+
       const ledger = await trx("leave_ledger")
-        .sum({
-          balance: "delta"
-        })
-        .where({
-          user_id: leaveRequest.user_id
-        })
+        .sum({ balance: "delta" })
+        .where({ user_id: leaveRequest.user_id })
         .first();
 
       const balance = Number(ledger?.balance ?? 0);
 
-      // Other pending requests (exclude current request)
       const pending = await trx("leave_requests")
-        .sum({
-          days: "days"
-        })
+        .sum({ days: "days" })
         .where({
           user_id: leaveRequest.user_id,
           status: "PENDING"
@@ -701,36 +1097,26 @@ async function decideAdminLeave({
       const availableBalance = balance - otherPendingDays;
       const requestedDays = Number(leaveRequest.days);
 
-      // Re-check balance
       if (availableBalance < requestedDays) {
         const error = new Error("Insufficient leave balance");
-
         error.code = "INSUFFICIENT_BALANCE";
         error.availableBalance = availableBalance;
         error.requestedDays = requestedDays;
-
         throw error;
       }
 
-      // Get holidays
       const holidays = await trx("holidays")
         .select(
           trx.raw("holiday_date::text as holiday_date")
         )
-        .whereBetween(
-          "holiday_date",
-          [fromDate, toDate]
-        );
+        .whereBetween("holiday_date", [fromDate, toDate]);
 
       const holidaySet = new Set(
         holidays.map((holiday) => holiday.holiday_date)
       );
 
-      // Weekly-off settings
       const weeklyOffSetting = await trx("settings")
-        .where({
-          key: "weekly_off_days"
-        })
+        .where({ key: "weekly_off_days" })
         .first();
 
       let weeklyOffDays = weeklyOffSetting?.value;
@@ -749,13 +1135,33 @@ async function decideAdminLeave({
 
       weeklyOffDays = weeklyOffDays.map(Number);
 
-      // Prepare date range
+      // Check the 3-day monthly limit using actual leave dates.
+      const requestedBreakdown = calculateWorkingDaysByMonth(
+        fromDate,
+        toDate,
+        weeklyOffDays,
+        holidays.map((holiday) => holiday.holiday_date)
+      );
+
+      const monthlyUsage = await getMonthlyLeaveUsage(
+        trx,
+        leaveRequest.user_id,
+        {
+          excludeRequestId: id,
+          weeklyOffDays
+        }
+      );
+
+      validateMonthlyLeaveLimit(
+        monthlyUsage,
+        requestedBreakdown
+      );
+
       const from = new Date(`${fromDate}T00:00:00Z`);
       const to = new Date(`${toDate}T00:00:00Z`);
-
-      // Check every affected working day for payroll lock
       const checkDate = new Date(`${fromDate}T00:00:00Z`);
 
+      // Check payroll locks.
       while (checkDate <= to) {
         const dateString = checkDate.toISOString().slice(0, 10);
         const dayOfWeek = checkDate.getUTCDay();
@@ -779,7 +1185,6 @@ async function decideAdminLeave({
 
             error.code = "MONTH_LOCKED";
             error.lockedDate = dateString;
-
             throw error;
           }
         }
@@ -787,11 +1192,8 @@ async function decideAdminLeave({
         checkDate.setUTCDate(checkDate.getUTCDate() + 1);
       }
 
-      // Update leave request
       const [updatedRequest] = await trx("leave_requests")
-        .where({
-          id
-        })
+        .where({ id })
         .update({
           status: "APPROVED",
           decided_by: adminId,
@@ -815,11 +1217,10 @@ async function decideAdminLeave({
           "updated_at"
         ]);
 
-      // Consume leave
       const [ledgerEntry] = await trx("leave_ledger")
         .insert({
           user_id: leaveRequest.user_id,
-          entry_date: new Date().toISOString().slice(0, 10),
+          entry_date: fromDate,
           delta: -requestedDays,
           type: "CONSUMED",
           leave_request_id: id,
@@ -836,7 +1237,7 @@ async function decideAdminLeave({
           "created_at"
         ]);
 
-      // Rewrite day summaries
+      // Update day summaries.
       const currentDay = new Date(`${fromDate}T00:00:00Z`);
 
       while (currentDay <= to) {
@@ -846,7 +1247,6 @@ async function decideAdminLeave({
         const isWeeklyOff = weeklyOffDays.includes(dayOfWeek);
         const isHoliday = holidaySet.has(dateString);
 
-        // Only working days become LEAVE
         if (!isWeeklyOff && !isHoliday) {
           const summary = await trx("day_summaries")
             .where({
@@ -857,11 +1257,8 @@ async function decideAdminLeave({
             .first();
 
           if (summary) {
-            // Existing summary -> change to LEAVE
             await trx("day_summaries")
-              .where({
-                id: summary.id
-              })
+              .where({ id: summary.id })
               .update({
                 status: "LEAVE",
                 first_in: null,
@@ -876,7 +1273,6 @@ async function decideAdminLeave({
                 updated_at: trx.fn.now()
               });
           } else {
-            // No summary -> create LEAVE summary
             await trx("day_summaries").insert({
               user_id: leaveRequest.user_id,
               work_date: dateString,
@@ -900,7 +1296,6 @@ async function decideAdminLeave({
         currentDay.setUTCDate(currentDay.getUTCDate() + 1);
       }
 
-      // Audit approval
       const [audit] = await trx("audit_log")
         .insert({
           actor_id: adminId,
@@ -921,7 +1316,6 @@ async function decideAdminLeave({
           "created_at"
         ]);
 
-      // Notify employee about approval
       await notifyUser(trx, {
         userId: leaveRequest.user_id,
         actorId: adminId,
@@ -947,14 +1341,10 @@ async function decideAdminLeave({
       };
     }
 
-    // ======================================================
     // REJECT
-    // ======================================================
 
     const [updatedRequest] = await trx("leave_requests")
-      .where({
-        id
-      })
+      .where({ id })
       .update({
         status: "REJECTED",
         decided_by: adminId,
@@ -978,7 +1368,6 @@ async function decideAdminLeave({
         "updated_at"
       ]);
 
-    // Audit rejection
     const [audit] = await trx("audit_log")
       .insert({
         actor_id: adminId,
@@ -999,7 +1388,6 @@ async function decideAdminLeave({
         "created_at"
       ]);
 
-    // Notify employee about rejection
     await notifyUser(trx, {
       userId: leaveRequest.user_id,
       actorId: adminId,
@@ -1024,7 +1412,6 @@ async function decideAdminLeave({
     };
   });
 
-  // Return response after transaction succeeds
   return {
     success: true,
     message:
@@ -1035,9 +1422,7 @@ async function decideAdminLeave({
   };
 }
 
-// ==========================================================
 // EXPORTS
-// ==========================================================
 
 module.exports = {
   getMyLeaveBalance,

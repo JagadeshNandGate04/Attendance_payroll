@@ -40,4 +40,22 @@ router.post(
   adminController.adjustEmployeeLeave
 );
 
+router.get(
+  "/employees/:id/salary",
+  adminAuthorize(),
+  adminController.getEmployeeCurrentSalary
+);
+
+router.patch(
+  "/employees/:id/salary",
+  adminAuthorize(),
+  adminController.editEmployeeSalary
+);
+
+router.get(
+  "/employees/:id/salary/history",
+  adminAuthorize(),
+  adminController.getEmployeeSalaryHistory
+);
+
   module.exports = router;

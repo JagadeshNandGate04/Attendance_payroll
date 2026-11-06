@@ -1,8 +1,3 @@
-
-// =====================================================
-// IMPORTS
-// =====================================================
-
 const knex = require("../config/database");
 const path = require("path");
 const ExcelJS = require("exceljs");
@@ -37,9 +32,7 @@ async function notifyUser(trx, {
   });
 }
 
-// =====================================================
 // CREATE PAYROLL RUN
-// =====================================================
 
 async function createPayrollRun({ adminId, month, year }) {
 
@@ -299,9 +292,8 @@ async function createPayrollRun({ adminId, month, year }) {
   });
 }
 
-// =====================================================
 // GET PAYROLL RUNS
-// =====================================================
+
 
 async function getPayrollRuns({ year }) {
 
@@ -342,9 +334,8 @@ async function getPayrollRuns({ year }) {
   };
 }
 
-// =====================================================
+
 // GET PAYROLL RUN DETAILS
-// =====================================================
 
 async function getPayrollRunById({ payrollRunId }) {
 
@@ -413,9 +404,9 @@ async function getPayrollRunById({ payrollRunId }) {
   };
 }
 
-// =====================================================
+
 // UPDATE PAYROLL ITEM
-// =====================================================
+
 
 async function updatePayrollItem({
   payrollItemId,
@@ -517,9 +508,9 @@ async function updatePayrollItem({
   });
 }
 
-// =====================================================
+
 // RECOMPUTE PAYROLL RUN
-// =====================================================
+
 
 async function recomputePayrollRun({
   payrollRunId,
@@ -671,9 +662,9 @@ async function recomputePayrollRun({
   });
 }
 
-// =====================================================
+
 // BUILD PAYSLIP DATA
-// =====================================================
+
 
 async function buildPayslipData({
   trx,
@@ -838,9 +829,9 @@ async function buildPayslipData({
   };
 }
 
-// =====================================================
+
 // FINALIZE PAYROLL RUN + PUBLISH PAYSLIPS + NOTIFICATIONS
-// =====================================================
+
 
 async function finalizePayrollRun({
   payrollRunId,
@@ -1118,9 +1109,8 @@ async function finalizePayrollRun({
   }
 }
 
-// =====================================================
 // DATE FORMATTER
-// =====================================================
+
 
 function formatDate(value) {
   if (!value) {
@@ -1141,9 +1131,8 @@ function formatDate(value) {
   }).format(date);
 }
 
-// =====================================================
 // EXPORT PAYROLL RUN
-// =====================================================
+
 
 async function exportPayrollRun({ payrollRunId }) {
 
@@ -1222,9 +1211,8 @@ async function exportPayrollRun({ payrollRunId }) {
   };
 }
 
-// =====================================================
 // GET MY PAYSLIPS
-// =====================================================
+
 
 async function getMyPayslips({ userId }) {
 
@@ -1270,9 +1258,7 @@ async function getMyPayslips({ userId }) {
   };
 }
 
-// =====================================================
 // DOWNLOAD MY PAYSLIP
-// =====================================================
 
 async function downloadMyPayslip({
   payslipId,
@@ -1316,10 +1302,6 @@ async function downloadMyPayslip({
     fileName: path.basename(filePath),
   };
 }
-
-// =====================================================
-// EXPORTS
-// =====================================================
 
 module.exports = {
   createPayrollRun,

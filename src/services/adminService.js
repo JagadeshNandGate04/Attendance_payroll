@@ -347,7 +347,6 @@ async function getAdminDashboard({ period = "week" } = {}) {
           WHEN ? = 'week' THEN CURRENT_DATE - INTERVAL '6 days'
           ELSE CURRENT_DATE - INTERVAL '29 days'
         END
-
         AND work_date <= CURRENT_DATE
 
         GROUP BY work_date
@@ -1003,6 +1002,260 @@ function generateTemporaryPassword() {
 // CREATE EMPLOYEE
 
 
+// async function createEmployee({
+//   adminId,
+//   emp_code,
+//   name,
+//   email,
+//   phone,
+//   designation,
+//   date_of_joining,
+//   basic,
+//   hra = 0,
+//   special_allowance = 0
+// }) {
+
+//   // VALIDATE REQUIRED FIELDS
+
+//   if (
+//     !emp_code ||
+//     !name ||
+//     !email ||
+//     !date_of_joining
+//   ) {
+//     const error = new Error(
+//       "emp_code, name, email and date_of_joining are required"
+//     );
+
+//     error.code = "REQUIRED_FIELDS";
+
+//     throw error;
+//   }
+
+//   // VALIDATE EMAIL
+
+//   const emailRegex =
+//     /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+//   if (!emailRegex.test(email)) {
+//     const error = new Error(
+//       "Invalid email address"
+//     );
+
+//     error.code = "INVALID_EMAIL";
+
+//     throw error;
+//   }
+
+//   // VALIDATE DATE
+
+//   const joiningDate =
+//     new Date(`${date_of_joining}T00:00:00Z`);
+
+//   if (
+//     Number.isNaN(joiningDate.getTime()) ||
+//     joiningDate.toISOString().slice(0, 10) !==
+//       date_of_joining
+//   ) {
+//     const error = new Error(
+//       "Invalid date_of_joining"
+//     );
+
+//     error.code = "INVALID_DATE";
+
+//     throw error;
+//   }
+
+//   // VALIDATE SALARY
+
+//   const basicAmount = Number(basic);
+//   const hraAmount = Number(hra || 0);
+//   const specialAllowanceAmount =
+//     Number(special_allowance || 0);
+
+//   if (
+//     !Number.isFinite(basicAmount) ||
+//     basicAmount < 0 ||
+//     !Number.isFinite(hraAmount) ||
+//     hraAmount < 0 ||
+//     !Number.isFinite(specialAllowanceAmount) ||
+//     specialAllowanceAmount < 0
+//   ) {
+//     const error = new Error(
+//       "Invalid salary values"
+//     );
+
+//     error.code = "INVALID_SALARY";
+
+//     throw error;
+//   }
+
+//   // CHECK DUPLICATE EMP CODE
+
+//   const existingEmpCode = await knex("users")
+//     .where("emp_code", emp_code)
+//     .first("id");
+
+//   if (existingEmpCode) {
+//     const error = new Error(
+//       `Employee code ${emp_code} already exists`
+//     );
+
+//     error.code = "DUPLICATE_EMP_CODE";
+
+//     throw error;
+//   }
+
+//   // CHECK DUPLICATE EMAIL
+
+//   const existingEmail = await knex("users")
+//     .where("email", email)
+//     .first("id");
+
+//   if (existingEmail) {
+//     const error = new Error(
+//       `Email ${email} already exists`
+//     );
+
+//     error.code = "DUPLICATE_EMAIL";
+
+//     throw error;
+//   }
+
+// // GENERATE TEMPORARY PASSWORD
+// const temporaryPassword = "Welcome@123";
+
+// // const temporaryPassword =
+// //   generateTemporaryPassword();
+
+// const passwordHash = await bcrypt.hash(
+//   temporaryPassword,
+//   10
+// );
+
+//   // GROSS
+
+//   const gross =
+//     basicAmount +
+//     hraAmount +
+//     specialAllowanceAmount;
+
+//   // TRANSACTION
+
+//   return await knex.transaction(async (trx) => {
+
+//     // INSERT USER
+
+//     const [user] = await trx("users")
+//       .insert({
+//         emp_code,
+//         name,
+//         email,
+//         phone: phone || null,
+//         password_hash: passwordHash,
+//         role: "EMPLOYEE",
+//         date_of_joining: date_of_joining,
+//         designation: designation || null,
+//         status: "ACTIVE",
+//         fcm_tokens: JSON.stringify([])
+//       })
+//       .returning([
+//         "id",
+//         "emp_code",
+//         "name",
+//         "email",
+//         "phone",
+//         "role",
+//         "date_of_joining",
+//         "designation",
+//         "status",
+//         "created_at",
+//         "updated_at"
+//       ]);
+
+//     // INSERT INITIAL SALARY STRUCTURE
+
+//     const [salary] = await trx(
+//       "salary_structures"
+//     )
+//       .insert({
+//         user_id: user.id,
+
+//         basic: basicAmount,
+
+//         hra: hraAmount,
+
+//         special_allowance:
+//           specialAllowanceAmount,
+
+//         gross,
+
+//         effective_from:
+//           date_of_joining,
+
+//         effective_to: null
+//       })
+//       .returning([
+//         "id",
+//         "user_id",
+//         "basic",
+//         "hra",
+//         "special_allowance",
+//         "gross",
+//         "effective_from",
+//         "effective_to"
+//       ]);
+
+//     // AUDIT LOG
+
+//     await trx("audit_log").insert({
+//       actor_id: adminId,
+
+//       action: "EMPLOYEE_CREATED",
+
+//       entity_type: "users",
+
+//       entity_id: user.id,
+
+//       before: null,
+
+//       after: JSON.stringify({
+//         id: user.id,
+//         emp_code: user.emp_code,
+//         name: user.name,
+//         email: user.email,
+//         designation: user.designation,
+//         status: user.status,
+//         salary_structure_id: salary.id
+//       }),
+
+//       reason:
+//         `Employee ${user.emp_code} created`
+//     });
+
+//     // RESPONSE
+
+//     return {
+//       success: true,
+
+//       message:
+//         "Employee created successfully",
+
+//       data: {
+//         employee: user,
+
+//         salary_structure: salary,
+
+//         temporary_password:
+//           temporaryPassword
+//       }
+//     };
+//   });
+// }
+
+
+// CREATE EMPLOYEE
+
 async function createEmployee({
   adminId,
   emp_code,
@@ -1012,11 +1265,14 @@ async function createEmployee({
   designation,
   date_of_joining,
   basic,
-  hra = 0,
-  special_allowance = 0
+  hra,
+  da,
+  special_allowance = 0,
 }) {
 
+  // --------------------------------------------
   // VALIDATE REQUIRED FIELDS
+  // --------------------------------------------
 
   if (
     !emp_code ||
@@ -1033,30 +1289,52 @@ async function createEmployee({
     throw error;
   }
 
+  // --------------------------------------------
   // VALIDATE EMAIL
+  // --------------------------------------------
 
-  const emailRegex =
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  if (!emailRegex.test(email)) {
-    const error = new Error(
-      "Invalid email address"
-    );
+  if (
+    typeof email !== "string" ||
+    !emailRegex.test(email.trim())
+  ) {
+    const error = new Error("Invalid email address");
 
     error.code = "INVALID_EMAIL";
 
     throw error;
   }
 
-  // VALIDATE DATE
-
-  const joiningDate =
-    new Date(`${date_of_joining}T00:00:00Z`);
+  // --------------------------------------------
+  // VALIDATE JOINING DATE
+  // --------------------------------------------
 
   if (
-    Number.isNaN(joiningDate.getTime()) ||
-    joiningDate.toISOString().slice(0, 10) !==
-      date_of_joining
+    typeof date_of_joining !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date_of_joining)
+  ) {
+    const error = new Error(
+      "date_of_joining must be in YYYY-MM-DD format"
+    );
+
+    error.code = "INVALID_DATE";
+
+    throw error;
+  }
+
+  const [year, month, day] = date_of_joining
+    .split("-")
+    .map(Number);
+
+  const joiningDate = new Date(
+    Date.UTC(year, month - 1, day)
+  );
+
+  if (
+    joiningDate.getUTCFullYear() !== year ||
+    joiningDate.getUTCMonth() !== month - 1 ||
+    joiningDate.getUTCDate() !== day
   ) {
     const error = new Error(
       "Invalid date_of_joining"
@@ -1067,23 +1345,25 @@ async function createEmployee({
     throw error;
   }
 
+  // --------------------------------------------
   // VALIDATE SALARY
-
-  const basicAmount = Number(basic);
-  const hraAmount = Number(hra || 0);
-  const specialAllowanceAmount =
-    Number(special_allowance || 0);
+  // BASIC, HRA AND DA ARE MANDATORY
+  // SPECIAL ALLOWANCE IS OPTIONAL
+  // --------------------------------------------
 
   if (
-    !Number.isFinite(basicAmount) ||
-    basicAmount < 0 ||
-    !Number.isFinite(hraAmount) ||
-    hraAmount < 0 ||
-    !Number.isFinite(specialAllowanceAmount) ||
-    specialAllowanceAmount < 0
+    basic === undefined ||
+    basic === null ||
+    basic === "" ||
+    hra === undefined ||
+    hra === null ||
+    hra === "" ||
+    da === undefined ||
+    da === null ||
+    da === ""
   ) {
     const error = new Error(
-      "Invalid salary values"
+      "Basic, HRA and DA are required"
     );
 
     error.code = "INVALID_SALARY";
@@ -1091,7 +1371,43 @@ async function createEmployee({
     throw error;
   }
 
-  // CHECK DUPLICATE EMP CODE
+  const basicAmount = Number(basic);
+
+  const hraAmount = Number(hra);
+
+  const daAmount = Number(da);
+
+  const specialAllowanceAmount =
+    special_allowance === undefined ||
+    special_allowance === null ||
+    special_allowance === ""
+      ? 0
+      : Number(special_allowance);
+
+  if (
+    !Number.isFinite(basicAmount) ||
+    basicAmount < 0 ||
+
+    !Number.isFinite(hraAmount) ||
+    hraAmount < 0 ||
+
+    !Number.isFinite(daAmount) ||
+    daAmount < 0 ||
+
+    !Number.isFinite(specialAllowanceAmount) ||
+    specialAllowanceAmount < 0
+  ) {
+    const error = new Error(
+      "Invalid salary values. Basic, HRA, DA and special allowance must be non-negative numbers"
+    );
+
+    error.code = "INVALID_SALARY";
+
+    throw error;
+  }
+
+  // CHECK DUPLICATE EMPLOYEE CODE
+
 
   const existingEmpCode = await knex("users")
     .where("emp_code", emp_code)
@@ -1109,13 +1425,15 @@ async function createEmployee({
 
   // CHECK DUPLICATE EMAIL
 
+  const normalizedEmail = email.trim().toLowerCase();
+
   const existingEmail = await knex("users")
-    .where("email", email)
+    .whereRaw("LOWER(email) = ?", [normalizedEmail])
     .first("id");
 
   if (existingEmail) {
     const error = new Error(
-      `Email ${email} already exists`
+      `Email ${normalizedEmail} already exists`
     );
 
     error.code = "DUPLICATE_EMAIL";
@@ -1123,42 +1441,59 @@ async function createEmployee({
     throw error;
   }
 
-// GENERATE TEMPORARY PASSWORD
-const temporaryPassword = "Welcome@123";
+  // GENERATE TEMPORARY PASSWORD
 
-// const temporaryPassword =
-//   generateTemporaryPassword();
 
-const passwordHash = await bcrypt.hash(
-  temporaryPassword,
-  10
-);
+  const temporaryPassword = "Welcome@123";
 
-  // GROSS
+  // You can replace this with your existing
+  // generateTemporaryPassword() function.
+
+  const passwordHash = await bcrypt.hash(
+    temporaryPassword,
+    10
+  );
+
+  // CALCULATE GROSS SALARY
+
 
   const gross =
     basicAmount +
     hraAmount +
+    daAmount +
     specialAllowanceAmount;
 
-  // TRANSACTION
+  // DATABASE TRANSACTION
+
 
   return await knex.transaction(async (trx) => {
 
     // INSERT USER
 
+
     const [user] = await trx("users")
       .insert({
-        emp_code,
-        name,
-        email,
+        emp_code: emp_code.trim(),
+
+        name: name.trim(),
+
+        email: normalizedEmail,
+
         phone: phone || null,
+
         password_hash: passwordHash,
+
         role: "EMPLOYEE",
-        date_of_joining: date_of_joining,
-        designation: designation || null,
+
+        date_of_joining,
+
+        designation: designation
+          ? designation.trim()
+          : null,
+
         status: "ACTIVE",
-        fcm_tokens: JSON.stringify([])
+
+        fcm_tokens: JSON.stringify([]),
       })
       .returning([
         "id",
@@ -1171,14 +1506,12 @@ const passwordHash = await bcrypt.hash(
         "designation",
         "status",
         "created_at",
-        "updated_at"
+        "updated_at",
       ]);
 
     // INSERT INITIAL SALARY STRUCTURE
 
-    const [salary] = await trx(
-      "salary_structures"
-    )
+    const [salary] = await trx("salary_structures")
       .insert({
         user_id: user.id,
 
@@ -1186,73 +1519,88 @@ const passwordHash = await bcrypt.hash(
 
         hra: hraAmount,
 
-        special_allowance:
-          specialAllowanceAmount,
+        da: daAmount,
+
+        special_allowance: specialAllowanceAmount,
 
         gross,
 
-        effective_from:
-          date_of_joining,
+        effective_from: date_of_joining,
 
-        effective_to: null
+        effective_to: null,
       })
       .returning([
         "id",
         "user_id",
         "basic",
         "hra",
+        "da",
         "special_allowance",
         "gross",
         "effective_from",
-        "effective_to"
+        "effective_to",
       ]);
 
     // AUDIT LOG
 
-    await trx("audit_log").insert({
-      actor_id: adminId,
+    await trx("audit_log")
+      .insert({
+        actor_id: adminId,
 
-      action: "EMPLOYEE_CREATED",
+        action: "EMPLOYEE_CREATED",
 
-      entity_type: "users",
+        entity_type: "users",
 
-      entity_id: user.id,
+        entity_id: user.id,
 
-      before: null,
+        before: null,
 
-      after: JSON.stringify({
-        id: user.id,
-        emp_code: user.emp_code,
-        name: user.name,
-        email: user.email,
-        designation: user.designation,
-        status: user.status,
-        salary_structure_id: salary.id
-      }),
+        after: {
+          id: user.id,
 
-      reason:
-        `Employee ${user.emp_code} created`
-    });
+          emp_code: user.emp_code,
+
+          name: user.name,
+
+          email: user.email,
+
+          designation: user.designation,
+
+          status: user.status,
+
+          salary_structure_id: salary.id,
+
+          basic: basicAmount,
+
+          hra: hraAmount,
+
+          da: daAmount,
+
+          special_allowance: specialAllowanceAmount,
+
+          gross,
+        },
+
+        reason: `Employee ${user.emp_code} created`,
+      });
 
     // RESPONSE
-
     return {
       success: true,
 
-      message:
-        "Employee created successfully",
+      message: "Employee created successfully",
 
       data: {
         employee: user,
 
         salary_structure: salary,
 
-        temporary_password:
-          temporaryPassword
-      }
+        temporary_password: temporaryPassword,
+      },
     };
   });
 }
+
 
 // UPDATE EMPLOYEE
 
@@ -1530,92 +1878,324 @@ async function updateEmployee({
 
 // ADD EMPLOYEE SALARY STRUCTURE
 
+// async function addEmployeeSalary({
+//   adminId,
+//   userId,
+//   basic,
+//   hra = 0,
+//   special_allowance = 0,
+//   effective_from,
+// }) {
+//   // VALIDATE ID
+
+//   const userIdNumber = Number(userId);
+
+//   if (!Number.isInteger(userIdNumber) || userIdNumber <= 0) {
+//     const error = new Error("Invalid employee id");
+
+//     error.code = "INVALID_ID";
+
+//     throw error;
+//   }
+
+//   // VALIDATE REQUIRED FIELDS
+
+//   if (basic === undefined || basic === null || !effective_from) {
+//     const error = new Error("basic and effective_from are required");
+
+//     error.code = "REQUIRED_FIELDS";
+
+//     throw error;
+//   }
+
+//   // CHECK EMPLOYEE
+
+//   const employee = await knex("users")
+//     .where("id", userIdNumber)
+//     .where("role", "EMPLOYEE")
+//     .first(["id", "emp_code", "name", "email", "status"]);
+
+//   if (!employee) {
+//     const error = new Error("Employee not found");
+
+//     error.code = "EMPLOYEE_NOT_FOUND";
+
+//     throw error;
+//   }
+
+//   // VALIDATE SALARY
+
+//   const basicAmount = Number(basic);
+
+//   const hraAmount = Number(hra || 0);
+
+//   const specialAllowanceAmount = Number(special_allowance || 0);
+
+//   if (
+//     !Number.isFinite(basicAmount) ||
+//     basicAmount < 0 ||
+//     !Number.isFinite(hraAmount) ||
+//     hraAmount < 0 ||
+//     !Number.isFinite(specialAllowanceAmount) ||
+//     specialAllowanceAmount < 0
+//   ) {
+//     const error = new Error("Invalid salary values");
+
+//     error.code = "INVALID_SALARY";
+
+//     throw error;
+//   }
+
+//   // VALIDATE EFFECTIVE DATE
+
+//   const effectiveDate = new Date(`${effective_from}T00:00:00Z`);
+
+//   if (
+//     Number.isNaN(effectiveDate.getTime()) ||
+//     effectiveDate.toISOString().slice(0, 10) !== effective_from
+//   ) {
+//     const error = new Error("Invalid effective_from date");
+
+//     error.code = "INVALID_DATE";
+
+//     throw error;
+//   }
+
+//   // TRANSACTION
+
+//   return await knex.transaction(async (trx) => {
+//     // FIND CURRENT SALARY STRUCTURE
+
+//     const currentSalary = await trx("salary_structures")
+//       .where("user_id", userIdNumber)
+//       .whereNull("effective_to")
+//       .orderBy("effective_from", "desc")
+//       .first();
+
+//     // VALIDATE EFFECTIVE DATE AGAINST
+//     // CURRENT SALARY
+
+//     if (currentSalary && effective_from <= currentSalary.effective_from) {
+//       const error = new Error(
+//         "effective_from must be later than the current salary effective_from",
+//       );
+
+//       error.code = "INVALID_EFFECTIVE_DATE";
+
+//       throw error;
+//     }
+
+//     // CALCULATE GROSS
+
+//     const gross = basicAmount + hraAmount + specialAllowanceAmount;
+
+//     // CLOSE CURRENT SALARY
+
+//     if (currentSalary) {
+//       // Old salary is valid until
+//       // one day before the new salary starts.
+
+//       const oldEffectiveTo = new Date(effectiveDate);
+
+//       oldEffectiveTo.setUTCDate(oldEffectiveTo.getUTCDate() - 1);
+
+//       const oldEffectiveToDate = oldEffectiveTo.toISOString().slice(0, 10);
+
+//       await trx("salary_structures").where("id", currentSalary.id).update({
+//         effective_to: oldEffectiveToDate,
+//       });
+//     }
+
+//     // INSERT NEW SALARY STRUCTURE
+
+//     const [newSalary] = await trx("salary_structures")
+//       .insert({
+//         user_id: userIdNumber,
+
+//         basic: basicAmount,
+
+//         hra: hraAmount,
+
+//         special_allowance: specialAllowanceAmount,
+
+//         gross,
+
+//         effective_from: effective_from,
+
+//         effective_to: null,
+//       })
+//       .returning([
+//         "id",
+//         "user_id",
+//         "basic",
+//         "hra",
+//         "special_allowance",
+//         "gross",
+//         "effective_from",
+//         "effective_to",
+//       ]);
+
+//     // AUDIT LOG
+
+//     await trx("audit_log").insert({
+//       actor_id: adminId,
+
+//       action: "SALARY_STRUCTURE_CREATED",
+
+//       entity_type: "salary_structures",
+
+//       entity_id: newSalary.id,
+
+//       before: currentSalary ? JSON.stringify(currentSalary) : null,
+
+//       after: JSON.stringify(newSalary),
+
+//       reason: `Salary structure revised for employee ${employee.emp_code}`,
+//     });
+
+//     // RESPONSE
+
+//     return {
+//       success: true,
+
+//       message: "Employee salary structure added successfully",
+
+//       data: {
+//         employee: {
+//           id: employee.id,
+//           emp_code: employee.emp_code,
+//           name: employee.name,
+//         },
+
+//         previous_salary: currentSalary || null,
+
+//         salary_structure: newSalary,
+//       },
+//     };
+//   });
+// }
+
+// ADD EMPLOYEE SALARY STRUCTURE
+
 async function addEmployeeSalary({
   adminId,
   userId,
   basic,
-  hra = 0,
+  hra,
+  da,
   special_allowance = 0,
   effective_from,
 }) {
-  // VALIDATE ID
+
+
+  // VALIDATE EMPLOYEE ID
 
   const userIdNumber = Number(userId);
 
   if (!Number.isInteger(userIdNumber) || userIdNumber <= 0) {
     const error = new Error("Invalid employee id");
-
     error.code = "INVALID_ID";
-
     throw error;
   }
 
+  
   // VALIDATE REQUIRED FIELDS
 
-  if (basic === undefined || basic === null || !effective_from) {
-    const error = new Error("basic and effective_from are required");
+  if (
+    basic === undefined ||
+    basic === null ||
+    hra === undefined ||
+    hra === null ||
+    da === undefined ||
+    da === null ||
+    !effective_from
+  ) {
+    const error = new Error(
+      "basic, hra, da and effective_from are required"
+    );
 
     error.code = "REQUIRED_FIELDS";
-
     throw error;
   }
+
 
   // CHECK EMPLOYEE
 
   const employee = await knex("users")
     .where("id", userIdNumber)
     .where("role", "EMPLOYEE")
-    .first(["id", "emp_code", "name", "email", "status"]);
+    .first([
+      "id",
+      "emp_code",
+      "name",
+      "email",
+      "status",
+    ]);
 
   if (!employee) {
     const error = new Error("Employee not found");
-
     error.code = "EMPLOYEE_NOT_FOUND";
-
     throw error;
   }
 
-  // VALIDATE SALARY
+
+  // VALIDATE SALARY VALUES
 
   const basicAmount = Number(basic);
+  const hraAmount = Number(hra);
+  const daAmount = Number(da);
 
-  const hraAmount = Number(hra || 0);
-
-  const specialAllowanceAmount = Number(special_allowance || 0);
+  const specialAllowanceAmount =
+    Number(special_allowance ?? 0);
 
   if (
     !Number.isFinite(basicAmount) ||
     basicAmount < 0 ||
+
     !Number.isFinite(hraAmount) ||
     hraAmount < 0 ||
+
+    !Number.isFinite(daAmount) ||
+    daAmount < 0 ||
+
     !Number.isFinite(specialAllowanceAmount) ||
     specialAllowanceAmount < 0
   ) {
     const error = new Error("Invalid salary values");
-
     error.code = "INVALID_SALARY";
-
     throw error;
   }
 
   // VALIDATE EFFECTIVE DATE
 
-  const effectiveDate = new Date(`${effective_from}T00:00:00Z`);
+
+  const effectiveDate = new Date(
+    `${effective_from}T00:00:00Z`
+  );
 
   if (
     Number.isNaN(effectiveDate.getTime()) ||
     effectiveDate.toISOString().slice(0, 10) !== effective_from
   ) {
     const error = new Error("Invalid effective_from date");
-
     error.code = "INVALID_DATE";
-
     throw error;
   }
+
+
+  // CALCULATE GROSS
+
+  const gross =
+    basicAmount +
+    hraAmount +
+    daAmount +
+    specialAllowanceAmount;
+
 
   // TRANSACTION
 
   return await knex.transaction(async (trx) => {
+
     // FIND CURRENT SALARY STRUCTURE
 
     const currentSalary = await trx("salary_structures")
@@ -1624,39 +2204,42 @@ async function addEmployeeSalary({
       .orderBy("effective_from", "desc")
       .first();
 
-    // VALIDATE EFFECTIVE DATE AGAINST
-    // CURRENT SALARY
+    // VALIDATE EFFECTIVE DATE AGAINST CURRENT
+ 
 
-    if (currentSalary && effective_from <= currentSalary.effective_from) {
+    if (
+      currentSalary &&
+      effective_from <= currentSalary.effective_from
+    ) {
       const error = new Error(
-        "effective_from must be later than the current salary effective_from",
+        "effective_from must be later than the current salary effective_from"
       );
 
       error.code = "INVALID_EFFECTIVE_DATE";
-
       throw error;
     }
 
-    // CALCULATE GROSS
-
-    const gross = basicAmount + hraAmount + specialAllowanceAmount;
-
-    // CLOSE CURRENT SALARY
+    // CLOSE CURRENT SALARY STRUCTURE
+  
 
     if (currentSalary) {
-      // Old salary is valid until
-      // one day before the new salary starts.
-
       const oldEffectiveTo = new Date(effectiveDate);
 
-      oldEffectiveTo.setUTCDate(oldEffectiveTo.getUTCDate() - 1);
+      oldEffectiveTo.setUTCDate(
+        oldEffectiveTo.getUTCDate() - 1
+      );
 
-      const oldEffectiveToDate = oldEffectiveTo.toISOString().slice(0, 10);
+      const oldEffectiveToDate = oldEffectiveTo
+        .toISOString()
+        .slice(0, 10);
 
-      await trx("salary_structures").where("id", currentSalary.id).update({
-        effective_to: oldEffectiveToDate,
-      });
+      await trx("salary_structures")
+        .where("id", currentSalary.id)
+        .update({
+          effective_to: oldEffectiveToDate,
+        });
     }
+
 
     // INSERT NEW SALARY STRUCTURE
 
@@ -1668,11 +2251,13 @@ async function addEmployeeSalary({
 
         hra: hraAmount,
 
+        da: daAmount,
+
         special_allowance: specialAllowanceAmount,
 
         gross,
 
-        effective_from: effective_from,
+        effective_from,
 
         effective_to: null,
       })
@@ -1681,12 +2266,14 @@ async function addEmployeeSalary({
         "user_id",
         "basic",
         "hra",
+        "da",
         "special_allowance",
         "gross",
         "effective_from",
         "effective_to",
       ]);
 
+  
     // AUDIT LOG
 
     await trx("audit_log").insert({
@@ -1698,13 +2285,16 @@ async function addEmployeeSalary({
 
       entity_id: newSalary.id,
 
-      before: currentSalary ? JSON.stringify(currentSalary) : null,
+      before: currentSalary
+        ? JSON.stringify(currentSalary)
+        : null,
 
       after: JSON.stringify(newSalary),
 
       reason: `Salary structure revised for employee ${employee.emp_code}`,
     });
 
+  
     // RESPONSE
 
     return {
@@ -1870,6 +2460,599 @@ async function adjustEmployeeLeave({ adminId, userId, delta, note }) {
   });
 }
 
+// GET EMPLOYEE CURRENT SALARY STRUCTURE
+
+async function getEmployeeCurrentSalary({ userId }) {
+
+  // VALIDATE EMPLOYEE ID
+
+  const userIdNumber = Number(userId);
+
+  if (!Number.isInteger(userIdNumber) || userIdNumber <= 0) {
+    const error = new Error("Invalid employee id");
+    error.code = "INVALID_ID";
+    throw error;
+  }
+
+  // GET EMPLOYEE DETAILS
+
+  const employee = await knex("users")
+    .where("id", userIdNumber)
+    .where("role", "EMPLOYEE")
+    .first([
+      "id",
+      "emp_code",
+      "name",
+      "email",
+      "designation",
+      "status",
+    ]);
+
+  if (!employee) {
+    const error = new Error("Employee not found");
+    error.code = "EMPLOYEE_NOT_FOUND";
+    throw error;
+  }
+
+  // GET CURRENT DATE IN APPLICATION TIMEZONE
+
+
+  const timeZone = process.env.TIMEZONE || "Asia/Kolkata";
+
+  const currentDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  // GET CURRENT SALARY STRUCTURE
+
+  const salary = await knex("salary_structures")
+    .select(
+      "id",
+      "user_id",
+      "basic",
+      "hra",
+      "da",
+      "special_allowance",
+      "gross",
+      knex.raw("effective_from::text AS effective_from"),
+      knex.raw("effective_to::text AS effective_to")
+    )
+    .where("user_id", userIdNumber)
+    .where("effective_from", "<=", currentDate)
+    .where(function () {
+      this.whereNull("effective_to")
+        .orWhere("effective_to", ">=", currentDate);
+    })
+    .orderBy("effective_from", "desc")
+    .orderBy("id", "desc")
+    .first();
+
+  if (!salary) {
+    const error = new Error(
+      "Current salary structure not found for this employee"
+    );
+
+    error.code = "SALARY_NOT_FOUND";
+    throw error;
+  }
+
+  // RESPONSE
+
+  return {
+    success: true,
+    message: "Employee current salary structure fetched successfully",
+
+    data: {
+      employee: {
+        id: employee.id,
+        emp_code: employee.emp_code,
+        name: employee.name,
+        email: employee.email,
+        designation: employee.designation,
+        status: employee.status,
+      },
+
+      salary_structure: salary,
+    },
+  };
+}
+
+// EDIT EMPLOYEE SALARY STRUCTURE
+
+async function editEmployeeSalary({
+  adminId,
+  userId,
+  basic,
+  hra,
+  da,
+  special_allowance = 0,
+  effective_from,
+}) {
+
+  
+  // VALIDATE EMPLOYEE ID
+
+  const userIdNumber = Number(userId);
+
+  if (!Number.isInteger(userIdNumber) || userIdNumber <= 0) {
+    const error = new Error("Invalid employee id");
+    error.code = "INVALID_ID";
+    throw error;
+  }
+
+  // VALIDATE REQUIRED FIELDS
+ 
+
+  if (
+    basic === undefined ||
+    basic === null ||
+    hra === undefined ||
+    hra === null ||
+    da === undefined ||
+    da === null ||
+    !effective_from
+  ) {
+    const error = new Error(
+      "basic, hra, da and effective_from are required"
+    );
+
+    error.code = "REQUIRED_FIELDS";
+    throw error;
+  }
+
+  
+  // VALIDATE SALARY VALUES
+
+  const basicAmount = Number(basic);
+  const hraAmount = Number(hra);
+  const daAmount = Number(da);
+
+  const specialAllowanceAmount = Number(
+    special_allowance ?? 0
+  );
+
+  if (
+    !Number.isFinite(basicAmount) ||
+    basicAmount < 0 ||
+
+    !Number.isFinite(hraAmount) ||
+    hraAmount < 0 ||
+
+    !Number.isFinite(daAmount) ||
+    daAmount < 0 ||
+
+    !Number.isFinite(specialAllowanceAmount) ||
+    specialAllowanceAmount < 0
+  ) {
+    const error = new Error("Invalid salary values");
+    error.code = "INVALID_SALARY";
+    throw error;
+  }
+
+ 
+  // VALIDATE EFFECTIVE DATE
+
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+  if (
+    typeof effective_from !== "string" ||
+    !datePattern.test(effective_from)
+  ) {
+    const error = new Error("Invalid effective_from date");
+    error.code = "INVALID_DATE";
+    throw error;
+  }
+
+  const effectiveDate = new Date(
+    `${effective_from}T00:00:00.000Z`
+  );
+
+  if (
+    Number.isNaN(effectiveDate.getTime()) ||
+    effectiveDate.toISOString().slice(0, 10) !== effective_from
+  ) {
+    const error = new Error("Invalid effective_from date");
+    error.code = "INVALID_DATE";
+    throw error;
+  }
+
+
+  // CALCULATE GROSS
+
+  const gross = Number(
+    (
+      basicAmount +
+      hraAmount +
+      daAmount +
+      specialAllowanceAmount
+    ).toFixed(2)
+  );
+
+  
+  // TRANSACTION
+
+  return await knex.transaction(async (trx) => {
+
+    
+    // LOCK AND CHECK EMPLOYEE
+
+    const employee = await trx("users")
+      .where("id", userIdNumber)
+      .where("role", "EMPLOYEE")
+      .forUpdate()
+      .first([
+        "id",
+        "emp_code",
+        "name",
+        "email",
+        "status",
+      ]);
+
+    if (!employee) {
+      const error = new Error("Employee not found");
+      error.code = "EMPLOYEE_NOT_FOUND";
+      throw error;
+    }
+
+    
+    // GET AND LOCK CURRENT SALARY
+
+    const currentSalary = await trx("salary_structures")
+      .select(
+        "id",
+        "user_id",
+        "basic",
+        "hra",
+        "da",
+        "special_allowance",
+        "gross",
+        knex.raw("effective_from::text AS effective_from"),
+        knex.raw("effective_to::text AS effective_to")
+      )
+      .where("user_id", userIdNumber)
+      .whereNull("effective_to")
+      .orderBy("effective_from", "desc")
+      .orderBy("id", "desc")
+      .forUpdate()
+      .first();
+
+    if (!currentSalary) {
+      const error = new Error(
+        "Current salary structure not found for this employee"
+      );
+
+      error.code = "SALARY_NOT_FOUND";
+      throw error;
+    }
+
+    
+    // VALIDATE EFFECTIVE DATE AGAINST CURRENT SALARY
+
+    const currentEffectiveFrom = String(
+      currentSalary.effective_from
+    ).slice(0, 10);
+
+    if (effective_from <= currentEffectiveFrom) {
+      const error = new Error(
+        `New effective date (${effective_from}) must be later than the current salary effective date (${currentEffectiveFrom})`
+      );
+
+      error.code = "INVALID_EFFECTIVE_DATE";
+      throw error;
+    }
+
+   
+    // CALCULATE PREVIOUS SALARY END DATE
+  
+
+    const oldEffectiveTo = new Date(effectiveDate);
+
+    oldEffectiveTo.setUTCDate(
+      oldEffectiveTo.getUTCDate() - 1
+    );
+
+    const oldEffectiveToDate = oldEffectiveTo
+      .toISOString()
+      .slice(0, 10);
+
+    // CLOSE PREVIOUS SALARY STRUCTURE
+
+
+    await trx("salary_structures")
+      .where("id", currentSalary.id)
+      .update({
+        effective_to: oldEffectiveToDate,
+      });
+
+    
+    // INSERT NEW SALARY STRUCTURE
+
+    const [newSalary] = await trx("salary_structures")
+      .insert({
+        user_id: userIdNumber,
+
+        basic: basicAmount,
+        hra: hraAmount,
+        da: daAmount,
+        special_allowance: specialAllowanceAmount,
+
+        gross,
+
+        effective_from,
+
+        effective_to: null,
+      })
+      .returning([
+        "id",
+        "user_id",
+        "basic",
+        "hra",
+        "da",
+        "special_allowance",
+        "gross",
+        "effective_from",
+        "effective_to",
+      ]);
+
+
+    // AUDIT LOG
+
+    await trx("audit_log").insert({
+      actor_id: adminId,
+
+      action: "SALARY_STRUCTURE_UPDATED",
+
+      entity_type: "salary_structures",
+
+      entity_id: newSalary.id,
+
+      before: JSON.stringify({
+        ...currentSalary,
+        effective_to: oldEffectiveToDate,
+      }),
+
+      after: JSON.stringify(newSalary),
+
+      reason: `Salary structure revised for employee ${employee.emp_code}`,
+    });
+
+   
+    // RESPONSE
+
+    return {
+      success: true,
+
+      message: "Employee salary structure updated successfully",
+
+      data: {
+        employee: {
+          id: employee.id,
+          emp_code: employee.emp_code,
+          name: employee.name,
+        },
+
+        previous_salary: {
+          ...currentSalary,
+          effective_to: oldEffectiveToDate,
+        },
+
+        salary_structure: newSalary,
+      },
+    };
+  });
+}
+
+// GET EMPLOYEE SALARY HISTORY
+
+async function getEmployeeSalaryHistory({ userId }) {
+
+  // VALIDATE EMPLOYEE ID
+ 
+
+  const userIdNumber = Number(userId);
+
+  if (!Number.isInteger(userIdNumber) || userIdNumber <= 0) {
+    const error = new Error("Invalid employee id");
+    error.code = "INVALID_ID";
+    throw error;
+  }
+
+
+  // GET EMPLOYEE DETAILS
+ 
+
+  const employee = await knex("users")
+    .where("id", userIdNumber)
+    .where("role", "EMPLOYEE")
+    .first([
+      "id",
+      "emp_code",
+      "name",
+      "email",
+      "designation",
+      "status",
+    ]);
+
+  if (!employee) {
+    const error = new Error("Employee not found");
+    error.code = "EMPLOYEE_NOT_FOUND";
+    throw error;
+  }
+
+  // GET ALL SALARY STRUCTURES
+
+
+  const salaryRecords = await knex("salary_structures")
+    .select(
+      "id",
+      "user_id",
+      "basic",
+      "hra",
+      "da",
+      "special_allowance",
+      "gross",
+      knex.raw("effective_from::text AS effective_from"),
+      knex.raw("effective_to::text AS effective_to")
+    )
+    .where("user_id", userIdNumber)
+    .orderBy("effective_from", "asc")
+    .orderBy("id", "asc");
+
+  if (!salaryRecords.length) {
+    const error = new Error(
+      "Salary history not found for this employee"
+    );
+
+    error.code = "SALARY_HISTORY_NOT_FOUND";
+    throw error;
+  }
+
+  // GET CURRENT DATE IN APPLICATION TIMEZONE
+
+
+  const timeZone = process.env.TIMEZONE || "Asia/Kolkata";
+
+  const currentDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  // CALCULATE SALARY HISTORY
+
+  const salaryHistory = salaryRecords.map((salary, index) => {
+
+    const gross = Number(salary.gross || 0);
+
+    const previousSalary =
+      index > 0 ? salaryRecords[index - 1] : null;
+
+    const previousGross = previousSalary
+      ? Number(previousSalary.gross || 0)
+      : null;
+
+    // SALARY DIFFERENCE
+
+    const salaryDifference = previousSalary
+      ? Number((gross - previousGross).toFixed(2))
+      : null;
+
+    // SALARY CHANGE PERCENTAGE
+
+    const salaryChangePercentage =
+      previousSalary && previousGross !== 0
+        ? Number(
+            ((salaryDifference / previousGross) * 100).toFixed(2)
+          )
+        : null;
+
+    // SALARY STATUS
+
+    let salaryStatus;
+
+    if (currentDate < salary.effective_from) {
+      salaryStatus = "SCHEDULED";
+    } else if (
+      salary.effective_to &&
+      currentDate > salary.effective_to
+    ) {
+      salaryStatus = "HISTORICAL";
+    } else {
+      salaryStatus = "CURRENT";
+    }
+
+    // SALARY PERIOD DURATION
+
+    const periodEndDate =
+      salary.effective_to && salary.effective_to < currentDate
+        ? salary.effective_to
+        : currentDate;
+
+    let durationDays = 0;
+
+    if (periodEndDate >= salary.effective_from) {
+      const start = new Date(
+        `${salary.effective_from}T00:00:00.000Z`
+      );
+
+      const end = new Date(
+        `${periodEndDate}T00:00:00.000Z`
+      );
+
+      durationDays =
+        Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
+    }
+
+    return {
+      ...salary,
+
+      previous_gross: previousGross,
+
+      salary_difference: salaryDifference,
+
+      salary_change_percentage: salaryChangePercentage,
+
+      change_type: !previousSalary
+        ? "INITIAL"
+        : salaryDifference > 0
+          ? "INCREASE"
+          : salaryDifference < 0
+            ? "DECREASE"
+            : "NO_CHANGE",
+
+      status: salaryStatus,
+
+      duration_days: durationDays,
+    };
+  });
+
+  // GET SUMMARY
+
+  const currentSalary = salaryHistory.find(
+    (salary) => salary.status === "CURRENT"
+  ) || null;
+
+  const latestSalary = salaryHistory[salaryHistory.length - 1];
+
+
+  // RESPONSE
+
+  return {
+    success: true,
+
+    message: "Employee salary history fetched successfully",
+
+    data: {
+      employee: {
+        id: employee.id,
+        emp_code: employee.emp_code,
+        name: employee.name,
+        email: employee.email,
+        designation: employee.designation,
+        status: employee.status,
+      },
+
+      summary: {
+        total_salary_revisions: salaryHistory.length,
+
+        initial_gross: Number(salaryHistory[0].gross || 0),
+
+        latest_gross: Number(latestSalary.gross || 0),
+
+        current_salary: currentSalary,
+
+        latest_salary: latestSalary,
+      },
+
+      salary_history: salaryHistory,
+    },
+  };
+}
+
 module.exports = {
   getAdminDashboard,
   getAdminRequestsInbox,
@@ -1878,4 +3061,7 @@ module.exports = {
   updateEmployee,
   addEmployeeSalary,
   adjustEmployeeLeave,
+  getEmployeeCurrentSalary,
+  editEmployeeSalary,
+  getEmployeeSalaryHistory
 };
