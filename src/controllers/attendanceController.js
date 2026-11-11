@@ -280,7 +280,7 @@ async function addAttendanceCorrection(req, res) {
     if (
       error.message === 'MONTH_LOCKED'
     ) {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         message:
           'Attendance month is locked'
@@ -363,7 +363,7 @@ async function voidAttendanceCorrection(req, res) {
     if (
       error.message === 'Correction already voided'
     ) {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         message: error.message
       });
@@ -372,7 +372,7 @@ async function voidAttendanceCorrection(req, res) {
     if (
       error.message === 'MONTH_LOCKED'
     ) {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         message:
           'Attendance month is locked'
@@ -431,7 +431,7 @@ async function adjustAttendanceLop(req, res) {
         : error.message === "MONTH_LOCKED" ||
           error.message === "LOP adjustment is allowed only for ABSENT days" ||
           error.message === "New LOP is the same as the current LOP"
-          ? 409
+          ? 404
           : 400;
 
     return res.status(statusCode).json({

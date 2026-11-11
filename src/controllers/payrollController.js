@@ -37,7 +37,7 @@ async function createPayrollRun(req, res) {
     }
 
     if (error.code === 'DUPLICATE') {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -59,7 +59,7 @@ async function createPayrollRun(req, res) {
     }
 
     if (error.code === 'MONTH_LOCKED') {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -191,7 +191,7 @@ async function updatePayrollItem(req, res) {
     }
 
     if (error.code === 'INVALID_STATE') {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message,

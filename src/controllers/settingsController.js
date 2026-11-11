@@ -104,10 +104,10 @@ async function createHoliday(req, res) {
   } catch (error) {
     let statusCode = 400;
     if (error.code === "MONTH_LOCKED") {
-      statusCode = 409;
+      statusCode = 404;
     }
     if (error.code === "HOLIDAY_ALREADY_EXISTS") {
-      statusCode = 409;
+      statusCode = 404;
     }
     return res
       .status(statusCode)
@@ -131,7 +131,7 @@ async function deleteHoliday(req, res) {
   } catch (error) {
     let statusCode = 400;
     if (error.code === "MONTH_LOCKED") {
-      statusCode = 409;
+      statusCode = 404;
     }
     if (error.code === "HOLIDAY_NOT_FOUND") {
       statusCode = 404;

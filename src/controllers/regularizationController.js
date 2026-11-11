@@ -50,7 +50,7 @@ async function applyMyRegularization(req, res) {
     }
 
     if (error.code === "MONTH_LOCKED") {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -193,7 +193,7 @@ async function decideAdminRegularization(req, res) {
     }
 
     if (error.code === "MONTH_LOCKED") {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message,

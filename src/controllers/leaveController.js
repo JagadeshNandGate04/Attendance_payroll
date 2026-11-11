@@ -139,7 +139,7 @@ async function applyMyLeave(req, res) {
     }
 
     if (error.code === "LEAVE_DATE_CONFLICT") {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -369,7 +369,7 @@ async function decideAdminLeave(req, res) {
     }
 
     if (error.code === 'MONTH_LOCKED') {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message,

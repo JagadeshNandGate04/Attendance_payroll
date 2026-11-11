@@ -26,7 +26,7 @@ async function createEmployee(data) {
     return {
 
       success: false,
-      statusCode: 409,
+      statusCode: 404,
       message:
         'Email already exists'
 
@@ -44,7 +44,7 @@ async function createEmployee(data) {
     return {
 
       success: false,
-      statusCode: 409,
+      statusCode: 404,
       message:
         'Phone number already exists'
 

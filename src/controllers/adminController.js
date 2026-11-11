@@ -230,7 +230,7 @@ async function createEmployee(req, res) {
     ];
 
     if (conflictErrors.includes(error.code)) {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -343,7 +343,7 @@ async function updateEmployee(req, res) {
     }
 
     if (error.code === "DUPLICATE_EMP_CODE") {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message
@@ -351,7 +351,7 @@ async function updateEmployee(req, res) {
     }
 
     if (error.code === "DUPLICATE_EMAIL") {
-      return res.status(409).json({
+      return res.status(404).json({
         success: false,
         error: error.code,
         message: error.message
