@@ -140,6 +140,56 @@ async function cancelMyPermission(req, res) {
   }
 }
 
+
+// ==========================================================
+// GET MY PERMISSION REQUESTS
+// ==========================================================
+
+async function getMyPermissionRequests(req, res) {
+  try {
+    const userId = req.user.id;
+    const role = String(req.user.role || "").toUpperCase();
+
+    // Only employees can access this endpoint.
+    if (role !== "EMPLOYEE") {
+      return res.status(403).json({
+        success: false,
+        error: "FORBIDDEN",
+        message: "Only employees can access their own permission requests"
+      });
+    }
+
+    const { month, year } = req.query;
+
+    const result = await permissionService.getMyPermissionRequests({
+      userId,
+      month,
+      year
+    });
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    console.error("Get my permission requests error:", error);
+
+    if (
+      error.code === "INVALID_MONTH" ||
+      error.code === "INVALID_YEAR"
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching permission requests"
+    });
+  }
+}
+
 // ==========================================================
 // ADMIN DECIDE PERMISSION
 // ==========================================================
@@ -257,6 +307,7 @@ module.exports = {
   getMyPermissionBalance,
   applyMyPermission,
   cancelMyPermission,
+  getMyPermissionRequests,
   decideAdminPermission,
   getAdminPermissionRequests,
 };

@@ -18,6 +18,11 @@ const adminAuthorize =
 
   router.post('/me/apply', userAuthorize(), regularizationController.applyMyRegularization);
   router.get('/me', userAuthorize(), regularizationController.getMyRegularizations);
+  router.get(
+  "/me/regularization/request",
+  userAuthorize(),
+  regularizationController.getMyRegularizationsRequest
+);
   router.get('/admin/requests', adminAuthorize(), regularizationController.getAdminRegularizationRequests)
   router.post('/admin/:id/decide', adminAuthorize(), regularizationController.decideAdminRegularization)
 

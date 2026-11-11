@@ -3,6 +3,27 @@ const knex = require("../config/database");
 const { formatDateOnly } = require("../utils/dateHelpers");
 const { recomputeDay } = require("../controllers/attendanceController");
 
+const APP_TIMEZONE = process.env.TIMEZONE || "Asia/Kolkata";
+
+function getLocalDateString(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const values = {};
+
+  for (const part of parts) {
+    if (part.type !== "literal") {
+      values[part.type] = part.value;
+    }
+  }
+
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 // =====================================================
 // NOTIFICATION HELPERS
 // =====================================================
@@ -529,6 +550,128 @@ async function getMyRegularizations({ userId, month, year }) {
     },
 
     count: requests.length,
+  };
+}
+
+
+// =====================================================
+// GET MY REGULARIZATION REQUESTS
+// =====================================================
+
+async function getMyRegularizationsRequest({ userId, month, year }) {
+
+  // =====================================================
+  // DEFAULT CURRENT MONTH AND YEAR (ASIA/KOLKATA)
+  // =====================================================
+
+  const today = getLocalDateString();
+
+  const currentYear = Number(today.slice(0, 4));
+  const currentMonth = Number(today.slice(5, 7));
+
+  const selectedMonth =
+    month === undefined || month === ""
+      ? currentMonth
+      : Number(month);
+
+  const selectedYear =
+    year === undefined || year === ""
+      ? currentYear
+      : Number(year);
+
+  // =====================================================
+  // VALIDATE MONTH
+  // =====================================================
+
+  if (
+    !Number.isInteger(selectedMonth) ||
+    selectedMonth < 1 ||
+    selectedMonth > 12
+  ) {
+    const error = new Error("Month must be between 1 and 12");
+    error.code = "INVALID_MONTH";
+    throw error;
+  }
+
+  // =====================================================
+  // VALIDATE YEAR
+  // =====================================================
+
+  if (
+    !Number.isInteger(selectedYear) ||
+    selectedYear < 2000 ||
+    selectedYear > 2100
+  ) {
+    const error = new Error("Invalid year");
+    error.code = "INVALID_YEAR";
+    throw error;
+  }
+
+  // =====================================================
+  // BUILD DATE RANGE
+  // =====================================================
+
+  const monthStart = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-01`;
+
+  const nextMonth = new Date(
+    Date.UTC(selectedYear, selectedMonth, 1)
+  );
+
+  const monthEndExclusive = nextMonth
+    .toISOString()
+    .slice(0, 10);
+
+  const monthEnd = new Date(
+    Date.UTC(selectedYear, selectedMonth, 0)
+  )
+    .toISOString()
+    .slice(0, 10);
+
+  // =====================================================
+  // FETCH REGULARIZATION REQUESTS
+  // =====================================================
+
+  const requests = await knex("regularization_requests")
+    .select(
+      "id",
+      "user_id",
+      knex.raw("work_date::text AS work_date"),
+      "type",
+      "claimed_in",
+      "claimed_out",
+      "reason",
+      "status",
+      "decided_by",
+      "decided_at",
+      "decision_note",
+      "created_at",
+      "updated_at"
+    )
+    .where("user_id", userId)
+    .where("work_date", ">=", monthStart)
+    .where("work_date", "<", monthEndExclusive)
+    .orderBy("work_date", "desc")
+    .orderBy("created_at", "desc");
+
+  // =====================================================
+  // RESPONSE
+  // =====================================================
+
+  return {
+    success: true,
+
+    data: {
+      filter: {
+        month: selectedMonth,
+        year: selectedYear,
+        month_start: monthStart,
+        month_end: monthEnd,
+      },
+
+      total_requests: requests.length,
+
+      requests,
+    },
   };
 }
 
@@ -1126,6 +1269,7 @@ async function decideAdminRegularization({
 module.exports = {
   applyMyRegularization,
   getMyRegularizations,
+  getMyRegularizationsRequest,
   getAdminRegularizationRequests,
   decideAdminRegularization,
 };

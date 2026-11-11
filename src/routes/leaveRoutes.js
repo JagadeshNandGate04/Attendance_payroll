@@ -31,6 +31,12 @@ router.post(
 );
 
 router.get(
+  '/me/requests',
+  userAuthorize(),
+  leaveController.getMyLeaveRequests
+);
+
+router.get(
   '/admin/requests',
   adminAuthorize(),
   leaveController.getAdminLeaveRequests

@@ -214,6 +214,52 @@ async function cancelMyLeave(req, res) {
   }
 }
 
+// GET EMPLOYEE'S OWN LEAVE REQUESTS
+async function getMyLeaveRequests(req, res) {
+  try {
+    const userId = req.user.id;
+    const role = String(req.user.role || "").toUpperCase();
+
+    // Only employees can access this endpoint.
+    if (role !== "EMPLOYEE") {
+      return res.status(403).json({
+        success: false,
+        error: "FORBIDDEN",
+        message: "Only employees can access their own leave requests"
+      });
+    }
+
+    const { month, year } = req.query;
+
+    const result = await leaveService.getMyLeaveRequests({
+      userId,
+      month,
+      year
+    });
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    console.error("Get my leave requests error:", error);
+
+    if (
+      error.code === "INVALID_MONTH" ||
+      error.code === "INVALID_YEAR"
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching leave requests"
+    });
+  }
+}
+
 // GET LEAVE REQUESTS BY ADMIN
 async function getAdminLeaveRequests(req, res) {
   try {
@@ -344,6 +390,7 @@ module.exports = {
   getMyLeaveBalance,
   applyMyLeave,
   cancelMyLeave,
+  getMyLeaveRequests,
   getAdminLeaveRequests,
   decideAdminLeave
 };

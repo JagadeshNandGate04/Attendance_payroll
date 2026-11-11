@@ -894,6 +894,132 @@ async function cancelMyLeave({
   };
 }
 
+// =====================================================
+// GET EMPLOYEE'S OWN LEAVE REQUESTS
+// =====================================================
+
+async function getMyLeaveRequests({
+  userId,
+  month,
+  year
+}) {
+
+  // ---------------------------------------------------
+  // DEFAULT MONTH AND YEAR
+  // ---------------------------------------------------
+
+  const today = getLocalDateString();
+
+  const currentYear = Number(today.slice(0, 4));
+  const currentMonth = Number(today.slice(5, 7));
+
+  const selectedMonth =
+    month === undefined || month === ""
+      ? currentMonth
+      : Number(month);
+
+  const selectedYear =
+    year === undefined || year === ""
+      ? currentYear
+      : Number(year);
+
+  // ---------------------------------------------------
+  // VALIDATE MONTH
+  // ---------------------------------------------------
+
+  if (
+    !Number.isInteger(selectedMonth) ||
+    selectedMonth < 1 ||
+    selectedMonth > 12
+  ) {
+    const error = new Error(
+      "Month must be between 1 and 12"
+    );
+
+    error.code = "INVALID_MONTH";
+    throw error;
+  }
+
+  // ---------------------------------------------------
+  // VALIDATE YEAR
+  // ---------------------------------------------------
+
+  if (
+    !Number.isInteger(selectedYear) ||
+    selectedYear < 2000 ||
+    selectedYear > 2100
+  ) {
+    const error = new Error(
+      "Invalid year"
+    );
+
+    error.code = "INVALID_YEAR";
+    throw error;
+  }
+
+  // ---------------------------------------------------
+  // CALCULATE SELECTED MONTH DATE RANGE
+  // ---------------------------------------------------
+
+  const monthStart =
+    `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-01`;
+
+  const nextMonth = new Date(
+    Date.UTC(selectedYear, selectedMonth, 1)
+  );
+
+  const monthEndExclusive =
+    nextMonth.toISOString().slice(0, 10);
+
+  // ---------------------------------------------------
+  // FETCH EMPLOYEE LEAVE REQUESTS
+  // ---------------------------------------------------
+
+  const leaveRequests = await knex("leave_requests")
+    .select(
+      "id",
+      "user_id",
+      knex.raw("from_date::text AS from_date"),
+      knex.raw("to_date::text AS to_date"),
+      "days",
+      "reason",
+      "is_retroactive",
+      "status",
+      "created_at",
+      "updated_at"
+    )
+    .where("user_id", userId)
+
+    // Include requests overlapping the selected month.
+    .where("from_date", "<", monthEndExclusive)
+    .where("to_date", ">=", monthStart)
+
+    .orderBy("from_date", "desc")
+    .orderBy("id", "desc");
+
+  // ---------------------------------------------------
+  // RESPONSE
+  // ---------------------------------------------------
+
+  return {
+    success: true,
+    data: {
+      filter: {
+        month: selectedMonth,
+        year: selectedYear,
+        month_start: monthStart,
+        month_end: new Date(
+          Date.UTC(selectedYear, selectedMonth, 0)
+        ).toISOString().slice(0, 10)
+      },
+
+      total_requests: leaveRequests.length,
+
+      leave_requests: leaveRequests
+    }
+  };
+}
+
 // GET ADMIN LEAVE REQUESTS
 
 async function getAdminLeaveRequests({
@@ -1428,6 +1554,7 @@ module.exports = {
   getMyLeaveBalance,
   applyMyLeave,
   cancelMyLeave,
+  getMyLeaveRequests,
   getAdminLeaveRequests,
   decideAdminLeave,
   notifyAdmins,

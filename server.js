@@ -161,6 +161,11 @@ async function shutdown(signal) {
 
     console.log("Application shutdown completed.");
 
+    if (signal === "SIGUSR2") {
+      process.kill(process.pid, "SIGUSR2");
+      return;
+    }
+
     process.exit(0);
 
   } catch (error) {
@@ -177,6 +182,8 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 process.on("SIGINT", () => shutdown("SIGINT"));
+
+process.once("SIGUSR2", () => shutdown("SIGUSR2"));
 
 // =====================================================
 // START APPLICATION

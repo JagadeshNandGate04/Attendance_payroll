@@ -211,12 +211,87 @@ async function decideAdminRegularization(req, res) {
 }
 
 // =====================================================
+// EMPLOYEE - GET MY REGULARIZATION REQUESTS
+// =====================================================
+
+async function getMyRegularizationsRequest(req, res) {
+  try {
+    const userId = req.user.id;
+    const { month, year } = req.query;
+
+    const result = await regularizationService.getMyRegularizationsRequest({
+      userId,
+      month,
+      year,
+    });
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    console.error("Get my regularizations error:", error);
+
+    if (
+      error.code === "INVALID_MONTH" ||
+      error.code === "INVALID_YEAR"
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching regularization requests",
+    });
+  }
+}// =====================================================
+// EMPLOYEE - GET MY REGULARIZATION REQUESTS
+// =====================================================
+
+async function getMyRegularizations(req, res) {
+  try {
+    const userId = req.user.id;
+    const { month, year } = req.query;
+
+    const result = await regularizationService.getMyRegularizations({
+      userId,
+      month,
+      year,
+    });
+
+    return res.status(200).json(result);
+
+  } catch (error) {
+    console.error("Get my regularizations error:", error);
+
+    if (
+      error.code === "INVALID_MONTH" ||
+      error.code === "INVALID_YEAR"
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching regularization requests",
+    });
+  }
+}
+
+// =====================================================
 // EXPORTS
 // =====================================================
 
 module.exports = {
   applyMyRegularization,
   getMyRegularizations,
+  getMyRegularizationsRequest,
   getAdminRegularizationRequests,
   decideAdminRegularization,
 };
