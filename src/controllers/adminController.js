@@ -263,6 +263,7 @@ async function updateEmployee(req, res) {
       status,
       basic,
       hra,
+      da,
       special_allowance
     } = req.body;
 
@@ -280,6 +281,7 @@ async function updateEmployee(req, res) {
       status,
       basic,
       hra,
+      da,
       special_allowance
     });
 

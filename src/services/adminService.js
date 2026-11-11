@@ -1616,6 +1616,7 @@ async function updateEmployee({
   status,
   basic,
   hra,
+  da,
   special_allowance,
 }) {
   // VALIDATE ID
@@ -1706,12 +1707,17 @@ async function updateEmployee({
   // SALARY VALIDATION
 
   const salaryProvided =
-    basic !== undefined || hra !== undefined || special_allowance !== undefined;
+    basic !== undefined ||
+    hra !== undefined ||
+    da !== undefined ||
+    special_allowance !== undefined;
 
   if (salaryProvided) {
     const basicAmount = Number(basic ?? 0);
 
     const hraAmount = Number(hra ?? 0);
+
+    const daAmount = Number(da ?? 0);
 
     const specialAllowanceAmount = Number(special_allowance ?? 0);
 
@@ -1720,6 +1726,8 @@ async function updateEmployee({
       basicAmount < 0 ||
       !Number.isFinite(hraAmount) ||
       hraAmount < 0 ||
+      !Number.isFinite(daAmount) ||
+      daAmount < 0 ||
       !Number.isFinite(specialAllowanceAmount) ||
       specialAllowanceAmount < 0
     ) {
@@ -1793,11 +1801,14 @@ async function updateEmployee({
 
       const hraAmount = Number(hra ?? currentSalary?.hra ?? 0);
 
+      const daAmount = Number(da ?? currentSalary?.da ?? 0);
+
       const specialAllowanceAmount = Number(
         special_allowance ?? currentSalary?.special_allowance ?? 0,
       );
 
-      const gross = basicAmount + hraAmount + specialAllowanceAmount;
+      const gross =
+        basicAmount + hraAmount + daAmount + specialAllowanceAmount;
 
       // CLOSE CURRENT SALARY
 
@@ -1817,6 +1828,8 @@ async function updateEmployee({
 
           hra: hraAmount,
 
+          da: daAmount,
+
           special_allowance: specialAllowanceAmount,
 
           gross,
@@ -1830,6 +1843,7 @@ async function updateEmployee({
           "user_id",
           "basic",
           "hra",
+          "da",
           "special_allowance",
           "gross",
           "effective_from",

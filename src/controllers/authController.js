@@ -1,18 +1,28 @@
 const authService = require('../services/AuthService');
 
 
-async function login(req, res) {
-    
+async function loginWithRole(req, res, expectedRole) {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
 
-    const result = await authService.login({ email, password });
+    const result = await authService.login({
+      email,
+      password,
+      expectedRole
+    });
 
     return res.status(200).json(result);
   } catch (error) {
     console.error('Login error:', error);
 
     if (error.message === 'Email and password are required') {
+      return res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+
+    if (error.message === 'A valid login type is required') {
       return res.status(400).json({
         success: false,
         message: error.message
@@ -29,11 +39,39 @@ async function login(req, res) {
       });
     }
 
+    if (error.message === 'Account type does not match this login') {
+      return res.status(403).json({
+        success: false,
+        message: error.message
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Internal server error during login'
     });
   }
+}
+
+async function login(req, res) {
+  const { login_type: loginType } = req.body || {};
+
+  if (!['ADMIN', 'EMPLOYEE'].includes(loginType)) {
+    return res.status(400).json({
+      success: false,
+      message: 'A valid login_type (ADMIN or EMPLOYEE) is required'
+    });
+  }
+
+  return loginWithRole(req, res, loginType);
+}
+
+function adminLogin(req, res) {
+  return loginWithRole(req, res, 'ADMIN');
+}
+
+function employeeLogin(req, res) {
+  return loginWithRole(req, res, 'EMPLOYEE');
 }
 
 // REFRESH TOKEN
@@ -473,6 +511,8 @@ async function adminChangePassword(req, res) {
 
 module.exports = {
   login,
+  adminLogin,
+  employeeLogin,
   refreshToken,
   changePassword,
   saveFcmToken,

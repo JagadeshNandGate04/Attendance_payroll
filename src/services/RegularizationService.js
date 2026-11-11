@@ -1,7 +1,7 @@
 const knex = require("../config/database");
 
 const { formatDateOnly } = require("../utils/dateHelpers");
-const { recomputeDay } = require("../services/attendanceService");
+const { recomputeDay } = require("../controllers/attendanceController");
 
 // =====================================================
 // NOTIFICATION HELPERS

@@ -1119,6 +1119,7 @@ async function buildPayslipData({
 
     const basic = Number(salaryStructure.basic || 0);
     const hra = Number(salaryStructure.hra || 0);
+    const da = Number(salaryStructure.da || 0);
 
     const specialAllowance = Number(
       salaryStructure.special_allowance || 0
@@ -1135,6 +1136,13 @@ async function buildPayslipData({
       earnings.push({
         label: "HRA",
         amount: hra,
+      });
+    }
+
+    if (da > 0) {
+      earnings.push({
+        label: "DA",
+        amount: da,
       });
     }
 
@@ -1741,23 +1749,42 @@ async function exportPayrollRun({ payrollRunId }) {
 
 async function getMyPayslips({ userId }) {
 
-  const payslips = await knex("payslips")
+  const payslips = await knex({ p: "payslips" })
     .select(
-      "id",
-      "month",
-      "year",
-      "published_at",
-      "created_at"
+      "p.id",
+      "p.month",
+      "p.year",
+      "p.published_at",
+      "p.created_at"
     )
-    .where("user_id", userId)
-    .whereNotNull("published_at")
+    .select(
+      knex("salary_structures as ss")
+        .select("ss.da")
+        .whereColumn("ss.user_id", "p.user_id")
+        .whereRaw(
+          "ss.effective_from <= make_date(??, ??, 1) + interval '1 month - 1 day'",
+          ["p.year", "p.month"]
+        )
+        .where(function () {
+          this.whereNull("ss.effective_to").orWhereRaw(
+            "ss.effective_to >= make_date(??, ??, 1)",
+            ["p.year", "p.month"]
+          );
+        })
+        .orderBy("ss.effective_from", "desc")
+        .orderBy("ss.id", "desc")
+        .limit(1)
+        .as("da")
+    )
+    .where("p.user_id", userId)
+    .whereNotNull("p.published_at")
     .orderBy([
       {
-        column: "year",
+        column: "p.year",
         order: "desc",
       },
       {
-        column: "month",
+        column: "p.month",
         order: "desc",
       },
     ]);
@@ -1766,6 +1793,7 @@ async function getMyPayslips({ userId }) {
     id: payslip.id,
     month: payslip.month,
     year: payslip.year,
+    da: Number(payslip.da || 0),
     published_at: payslip.published_at,
     created_at: payslip.created_at,
 

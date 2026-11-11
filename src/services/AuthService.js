@@ -4,10 +4,14 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { sendOtpEmail } = require('../config/mailer');
 
-async function login({ email, password }) {
+async function login({ email, password, expectedRole }) {
   try {
     if (!email || !password) {
       throw new Error('Email and password are required');
+    }
+
+    if (!['ADMIN', 'EMPLOYEE'].includes(expectedRole)) {
+      throw new Error('A valid login type is required');
     }
 
     const user = await knex('users')
@@ -29,6 +33,10 @@ async function login({ email, password }) {
 
     if (!validPassword) {
       throw new Error('Invalid email or password');
+    }
+
+    if (user.role !== expectedRole) {
+      throw new Error('Account type does not match this login');
     }
 
     const token = jwt.sign(

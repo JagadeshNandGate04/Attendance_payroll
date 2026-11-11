@@ -12,6 +12,10 @@ const authController = require("../controllers/authController");
 
 router.post("/login", authController.login);
 
+router.post("/admin/login", authController.adminLogin);
+
+router.post("/employee/login", authController.employeeLogin);
+
 router.post("/refresh", authController.refreshToken);
 
 router.post("/forgot-password", authController.forgotPassword);
