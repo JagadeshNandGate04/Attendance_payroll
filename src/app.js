@@ -20,6 +20,7 @@ const settingsRoutes = require('./routes/settingsRoutes');
 const adminRoutes = require('./routes/adminRoutes')
 const auditRoutes = require('./routes/auditRoutes')
 const notificationRoutes = require("./routes/notificationRoutes");
+const employeeProfileRoutes = require('./routes/employeeProfileRoutes');
 
 const app = express();
 
@@ -99,6 +100,7 @@ app.use(`${BASE_API_PATH}/settings`, settingsRoutes);
 app.use(`${BASE_API_PATH}/admin`, adminRoutes)
 app.use(`${BASE_API_PATH}/audit`, auditRoutes)
 app.use(`${BASE_API_PATH}/notifications`, notificationRoutes)
+app.use(`${BASE_API_PATH}/employee-profile`, employeeProfileRoutes);
 // =====================
 // 404 Handler
 // =====================
