@@ -177,9 +177,71 @@ async function markAllAsRead({ userId }) {
   };
 }
 
+// ==========================================================
+// CREATE ANNOUNCEMENT FOR ACTIVE EMPLOYEES
+// ==========================================================
+
+async function createAnnouncement({
+  actorId,
+  title,
+  message
+}) {
+  if (
+    typeof title !== "string" ||
+    !title.trim() ||
+    title.trim().length > 150 ||
+    typeof message !== "string" ||
+    !message.trim()
+  ) {
+    const error = new Error(
+      "A title of up to 150 characters and a non-empty message are required"
+    );
+    error.code = "INVALID_ANNOUNCEMENT";
+    throw error;
+  }
+
+  const announcementTitle = title.trim();
+  const announcementMessage = message.trim();
+
+  const recipientCount = await knex.transaction(async (trx) => {
+    const employees = await trx("users")
+      .select("id")
+      .whereRaw("UPPER(role) = ?", ["EMPLOYEE"])
+      .whereRaw("UPPER(status) = ?", ["ACTIVE"]);
+
+    const notifications = employees.map((employee) => ({
+      user_id: employee.id,
+      actor_id: actorId,
+      type: "ANNOUNCEMENT",
+      title: announcementTitle,
+      message: announcementMessage,
+      entity_type: "announcement"
+    }));
+
+    const batchSize = 500;
+
+    for (let index = 0; index < notifications.length; index += batchSize) {
+      await trx("notifications").insert(
+        notifications.slice(index, index + batchSize)
+      );
+    }
+
+    return notifications.length;
+  });
+
+  return {
+    success: true,
+    message: "Announcement sent to active employees",
+    data: {
+      recipient_count: recipientCount
+    }
+  };
+}
+
 module.exports = {
   getNotifications,
   getUnreadCount,
   markAsRead,
-  markAllAsRead
+  markAllAsRead,
+  createAnnouncement
 };

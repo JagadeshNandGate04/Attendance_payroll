@@ -105,9 +105,39 @@ async function markAllAsRead(req, res) {
   }
 }
 
+// CREATE ANNOUNCEMENT FOR ACTIVE EMPLOYEES
+async function createAnnouncement(req, res) {
+  try {
+    const result = await notificationService.createAnnouncement({
+      actorId: req.user.id,
+      title: req.body?.title,
+      message: req.body?.message
+    });
+
+    return res.status(201).json(result);
+
+  } catch (error) {
+    console.error("Create announcement error:", error);
+
+    if (error.code === "INVALID_ANNOUNCEMENT") {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while creating announcement"
+    });
+  }
+}
+
 module.exports = {
   getNotifications,
   getUnreadCount,
   markAsRead,
-  markAllAsRead
+  markAllAsRead,
+  createAnnouncement
 };

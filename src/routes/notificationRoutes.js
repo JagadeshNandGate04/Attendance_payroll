@@ -62,4 +62,10 @@ router.patch(
   notificationController.markAsRead
 );
 
+router.post(
+  "/admin/announcements",
+  adminAuthorize(),
+  notificationController.createAnnouncement
+);
+
 module.exports = router;
