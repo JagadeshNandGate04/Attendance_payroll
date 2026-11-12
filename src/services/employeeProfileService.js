@@ -1478,6 +1478,2006 @@ async function rejectPersonalDetailsRequest({
 
 
 
+// ADDRESS RELATED API FUNCTION
+
+
+/* =====================================================
+   EMPLOYEE ADDRESS DETAILS
+   ===================================================== */
+
+const ADDRESS_FIELDS = [
+  "address_line_1",
+  "address_line_2",
+  "address_line_3",
+  "city",
+  "district",
+  "state",
+  "pincode",
+  "country",
+];
+
+const ADDRESS_TYPES = ["PERMANENT", "COMMUNICATION"];
+
+function createAddressError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function validateAddressData(addressData) {
+  if (
+    !addressData ||
+    typeof addressData !== "object" ||
+    Array.isArray(addressData)
+  ) {
+    throw createAddressError(
+      "INVALID_ADDRESS_DATA",
+      "Address details must be a valid object"
+    );
+  }
+
+  const addressType = String(
+    addressData.address_type || ""
+  ).trim().toUpperCase();
+
+  if (!ADDRESS_TYPES.includes(addressType)) {
+    throw createAddressError(
+      "INVALID_ADDRESS_TYPE",
+      "Address type must be PERMANENT or COMMUNICATION"
+    );
+  }
+
+  const unknownFields = Object.keys(addressData).filter(
+    (field) =>
+      field !== "address_type" &&
+      !ADDRESS_FIELDS.includes(field)
+  );
+
+  if (unknownFields.length > 0) {
+    throw createAddressError(
+      "INVALID_ADDRESS_FIELD",
+      `Invalid address fields: ${unknownFields.join(", ")}`
+    );
+  }
+
+  const normalizedData = {
+    address_type: addressType,
+  };
+
+  for (const field of ADDRESS_FIELDS) {
+    const value = addressData[field];
+
+    if (value === undefined) {
+      throw createAddressError(
+        "MISSING_ADDRESS_FIELD",
+        `${field} is required`
+      );
+    }
+
+    if (value !== null && typeof value !== "string") {
+      throw createAddressError(
+        "INVALID_ADDRESS_FIELD_VALUE",
+        `${field} must be a string or null`
+      );
+    }
+
+    const normalizedValue =
+      typeof value === "string" ? value.trim() : null;
+
+    if (
+      normalizedValue &&
+      normalizedValue.length > 255
+    ) {
+      throw createAddressError(
+        "INVALID_ADDRESS_FIELD_VALUE",
+        `${field} cannot exceed 255 characters`
+      );
+    }
+
+    normalizedData[field] = normalizedValue || null;
+  }
+
+  if (!normalizedData.address_line_1) {
+    throw createAddressError(
+      "INVALID_ADDRESS_FIELD_VALUE",
+      "Address line 1 is required"
+    );
+  }
+
+  if (!normalizedData.city) {
+    throw createAddressError(
+      "INVALID_ADDRESS_FIELD_VALUE",
+      "City is required"
+    );
+  }
+
+  if (!normalizedData.state) {
+    throw createAddressError(
+      "INVALID_ADDRESS_FIELD_VALUE",
+      "State is required"
+    );
+  }
+
+  if (!normalizedData.pincode) {
+    throw createAddressError(
+      "INVALID_ADDRESS_FIELD_VALUE",
+      "Pincode is required"
+    );
+  }
+
+  return normalizedData;
+}
+
+
+// =====================================================
+// EMPLOYEE: SUBMIT ADDRESS REQUEST
+// =====================================================
+
+async function submitAddressRequest({
+  userId,
+  addressData,
+}) {
+  const normalizedData = validateAddressData(addressData);
+
+  return knex.transaction(async (trx) => {
+    const profile = await trx("employee_profiles")
+      .where({ user_id: userId })
+      .first();
+
+    if (!profile) {
+      throw createAddressError(
+        "PROFILE_NOT_FOUND",
+        "Employee profile not found"
+      );
+    }
+
+    const existingAddress = await trx("employee_addresses")
+      .where({
+        user_id: userId,
+        address_type: normalizedData.address_type,
+      })
+      .first();
+
+    const requestType = existingAddress ? "UPDATE" : "CREATE";
+
+    // Prevent another pending request for this address type.
+    const pendingRequests = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({
+        user_id: userId,
+        section: "ADDRESS",
+        status: "PENDING",
+      })
+      .select("id", "requested_data");
+
+    const alreadyPending = pendingRequests.some((request) => {
+      const requestedData = request.requested_data || {};
+
+      return (
+        requestedData.address_type ===
+        normalizedData.address_type
+      );
+    });
+
+    if (alreadyPending) {
+      throw createAddressError(
+        "ADDRESS_REQUEST_ALREADY_PENDING",
+        `A pending ${normalizedData.address_type.toLowerCase()} address request already exists`
+      );
+    }
+
+    const existingData = existingAddress
+      ? {
+          address_type: existingAddress.address_type,
+          ...Object.fromEntries(
+            ADDRESS_FIELDS.map((field) => [
+              field,
+              existingAddress[field] ?? null,
+            ])
+          ),
+        }
+      : {};
+
+    const [request] = await trx(
+      "employee_profile_change_requests"
+    )
+      .insert({
+        user_id: userId,
+        section: "ADDRESS",
+        record_id: existingAddress
+          ? existingAddress.id
+          : null,
+        request_type: requestType,
+        existing_data: JSON.stringify(existingData),
+        requested_data: JSON.stringify(normalizedData),
+        status: "PENDING",
+      })
+      .returning([
+        "id",
+        "user_id",
+        "section",
+        "record_id",
+        "request_type",
+        "status",
+        "created_at",
+      ]);
+
+    return {
+      success: true,
+      message: "Address change request submitted successfully",
+      data: {
+        request,
+      },
+    };
+  });
+}
+
+
+// =====================================================
+// EMPLOYEE: GET MY ADDRESSES
+// =====================================================
+
+async function getMyAddresses({ userId }) {
+  const profile = await knex("employee_profiles")
+    .where({ user_id: userId })
+    .first();
+
+  if (!profile) {
+    throw createAddressError(
+      "PROFILE_NOT_FOUND",
+      "Employee profile not found"
+    );
+  }
+
+  const addresses = await knex("employee_addresses")
+    .where({ user_id: userId })
+    .select(
+      "id",
+      "user_id",
+      "address_type",
+      ...ADDRESS_FIELDS,
+      "created_at",
+      "updated_at"
+    )
+    .orderBy("address_type", "asc");
+
+  const pendingRequests = await knex(
+    "employee_profile_change_requests"
+  )
+    .where({
+      user_id: userId,
+      section: "ADDRESS",
+      status: "PENDING",
+    })
+    .select(
+      "id",
+      "record_id",
+      "request_type",
+      "existing_data",
+      "requested_data",
+      "status",
+      "created_at"
+    )
+    .orderBy("created_at", "desc");
+
+  return {
+    success: true,
+    message: "Employee addresses fetched successfully",
+    data: {
+      addresses,
+      pending_requests: pendingRequests,
+    },
+  };
+}
+
+
+// =====================================================
+// ADMIN: APPROVE ADDRESS REQUEST
+// =====================================================
+
+async function approveAddressRequest({
+  requestId,
+  adminId,
+  approvalRemarks = null,
+}) {
+  const normalizedRequestId = Number(requestId);
+
+  if (
+    !Number.isInteger(normalizedRequestId) ||
+    normalizedRequestId <= 0
+  ) {
+    throw createAddressError(
+      "INVALID_REQUEST_ID",
+      "Invalid profile request ID"
+    );
+  }
+
+  if (
+    approvalRemarks !== null &&
+    (
+      typeof approvalRemarks !== "string" ||
+      approvalRemarks.trim().length > 1000
+    )
+  ) {
+    throw createAddressError(
+      "INVALID_APPROVAL_REMARKS",
+      "Approval remarks must be a string with a maximum of 1000 characters"
+    );
+  }
+
+  return knex.transaction(async (trx) => {
+    const request = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: normalizedRequestId })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createAddressError(
+        "PROFILE_REQUEST_NOT_FOUND",
+        "Profile change request not found"
+      );
+    }
+
+    if (
+      request.section !== "ADDRESS" ||
+      !["CREATE", "UPDATE"].includes(request.request_type)
+    ) {
+      throw createAddressError(
+        "UNSUPPORTED_PROFILE_REQUEST",
+        "This request is not a supported address request"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createAddressError(
+        "PROFILE_REQUEST_NOT_PENDING",
+        "This profile request has already been reviewed"
+      );
+    }
+
+    let normalizedData;
+
+    try {
+      normalizedData = validateAddressData(
+        request.requested_data
+      );
+    } catch (error) {
+      throw createAddressError(
+        "INVALID_ADDRESS_REQUEST_DATA",
+        "Stored address request data is invalid and cannot be approved"
+      );
+    }
+
+    const profile = await trx("employee_profiles")
+      .where({ user_id: request.user_id })
+      .first();
+
+    if (!profile) {
+      throw createAddressError(
+        "PROFILE_NOT_FOUND",
+        "Employee profile not found"
+      );
+    }
+
+    const addressData = {
+      user_id: request.user_id,
+      ...normalizedData,
+      updated_at: trx.fn.now(),
+    };
+
+    if (request.request_type === "CREATE") {
+      // Protect against a duplicate address created elsewhere.
+      const existingAddress = await trx("employee_addresses")
+        .where({
+          user_id: request.user_id,
+          address_type: normalizedData.address_type,
+        })
+        .first();
+
+      if (existingAddress) {
+        throw createAddressError(
+          "ADDRESS_ALREADY_EXISTS",
+          "An address of this type already exists. Please review the request."
+        );
+      }
+
+      addressData.created_at = trx.fn.now();
+
+      await trx("employee_addresses").insert(addressData);
+    } else {
+      const existingAddress = await trx("employee_addresses")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+          address_type: normalizedData.address_type,
+        })
+        .forUpdate()
+        .first();
+
+      if (!existingAddress) {
+        throw createAddressError(
+          "ADDRESS_NOT_FOUND",
+          "Existing address record not found"
+        );
+      }
+
+      await trx("employee_addresses")
+        .where({
+          id: existingAddress.id,
+          user_id: request.user_id,
+        })
+        .update(addressData);
+    }
+
+    await trx("employee_profile_change_requests")
+      .where({ id: normalizedRequestId })
+      .update({
+        status: "APPROVED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks:
+          approvalRemarks?.trim() || null,
+        updated_at: trx.fn.now(),
+      });
+
+    return {
+      success: true,
+      message: "Address request approved successfully",
+      data: {
+        request_id: String(normalizedRequestId),
+        user_id: String(request.user_id),
+        section: "ADDRESS",
+        status: "APPROVED",
+        address_type: normalizedData.address_type,
+        updated_fields: ADDRESS_FIELDS,
+        reviewed_by: String(adminId),
+        approval_remarks:
+          approvalRemarks?.trim() || null,
+      },
+    };
+  });
+}
+
+
+// =====================================================
+// ADMIN: REJECT ADDRESS REQUEST
+// =====================================================
+
+async function rejectAddressRequest({
+  requestId,
+  adminId,
+  approvalRemarks,
+}) {
+  const normalizedRequestId = Number(requestId);
+
+  if (
+    !Number.isInteger(normalizedRequestId) ||
+    normalizedRequestId <= 0
+  ) {
+    throw createAddressError(
+      "INVALID_REQUEST_ID",
+      "Invalid profile request ID"
+    );
+  }
+
+  if (
+    typeof approvalRemarks !== "string" ||
+    !approvalRemarks.trim() ||
+    approvalRemarks.trim().length > 1000
+  ) {
+    throw createAddressError(
+      "INVALID_APPROVAL_REMARKS",
+      "Rejection remarks are required and cannot exceed 1000 characters"
+    );
+  }
+
+  return knex.transaction(async (trx) => {
+    const request = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: normalizedRequestId })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createAddressError(
+        "PROFILE_REQUEST_NOT_FOUND",
+        "Profile change request not found"
+      );
+    }
+
+    if (
+      request.section !== "ADDRESS" ||
+      !["CREATE", "UPDATE"].includes(request.request_type)
+    ) {
+      throw createAddressError(
+        "UNSUPPORTED_PROFILE_REQUEST",
+        "This request is not a supported address request"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createAddressError(
+        "PROFILE_REQUEST_NOT_PENDING",
+        "This profile request has already been reviewed"
+      );
+    }
+
+    await trx("employee_profile_change_requests")
+      .where({ id: normalizedRequestId })
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: approvalRemarks.trim(),
+        updated_at: trx.fn.now(),
+      });
+
+    return {
+      success: true,
+      message: "Address request rejected successfully",
+      data: {
+        request_id: String(normalizedRequestId),
+        user_id: String(request.user_id),
+        section: "ADDRESS",
+        status: "REJECTED",
+        reviewed_by: String(adminId),
+        approval_remarks: approvalRemarks.trim(),
+      },
+    };
+  });
+}
+
+
+
+// =====================================================
+// EMERGENCY CONTACT DETAILS
+// =====================================================
+
+const EMERGENCY_CONTACT_FIELDS = [
+  "contact_name",
+  "relation",
+  "mobile_no",
+  "alternate_mobile_no",
+  "address",
+  "is_primary",
+];
+
+const EMERGENCY_CONTACT_OPTIONAL_FIELDS = [
+  "relation",
+  "alternate_mobile_no",
+  "address",
+];
+
+function createEmergencyContactError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function validateEmergencyContactData(data, options = {}) {
+  const { allowPartial = false } = options;
+
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw createEmergencyContactError(
+      "INVALID_EMERGENCY_CONTACT_DATA",
+      "Emergency contact data must be a valid object"
+    );
+  }
+
+  const keys = Object.keys(data);
+
+  if (!keys.length) {
+    throw createEmergencyContactError(
+      "EMPTY_EMERGENCY_CONTACT_DATA",
+      "Please provide emergency contact details"
+    );
+  }
+
+  for (const key of keys) {
+    if (!EMERGENCY_CONTACT_FIELDS.includes(key)) {
+      throw createEmergencyContactError(
+        "INVALID_EMERGENCY_CONTACT_FIELD",
+        `Field '${key}' is not allowed`
+      );
+    }
+  }
+
+  const normalized = {};
+
+  for (const key of keys) {
+    const value = data[key];
+
+    if (key === "is_primary") {
+      if (typeof value !== "boolean") {
+        throw createEmergencyContactError(
+          "INVALID_EMERGENCY_CONTACT_FIELD_VALUE",
+          "is_primary must be true or false"
+        );
+      }
+
+      normalized[key] = value;
+      continue;
+    }
+
+    if (value === null || value === "") {
+      if (
+        key === "contact_name" ||
+        key === "mobile_no"
+      ) {
+        throw createEmergencyContactError(
+          "INVALID_EMERGENCY_CONTACT_FIELD_VALUE",
+          `${key} cannot be empty`
+        );
+      }
+
+      if (!EMERGENCY_CONTACT_OPTIONAL_FIELDS.includes(key)) {
+        throw createEmergencyContactError(
+          "INVALID_EMERGENCY_CONTACT_FIELD_VALUE",
+          `${key} cannot be empty`
+        );
+      }
+
+      normalized[key] = null;
+      continue;
+    }
+
+    if (typeof value !== "string") {
+      throw createEmergencyContactError(
+        "INVALID_EMERGENCY_CONTACT_FIELD_VALUE",
+        `${key} must be a string`
+      );
+    }
+
+    const trimmed = value.trim();
+
+    if (key === "contact_name" && !trimmed) {
+      throw createEmergencyContactError(
+        "INVALID_EMERGENCY_CONTACT_FIELD_VALUE",
+        "Contact name is required"
+      );
+    }
+
+    if (key === "mobile_no" || key === "alternate_mobile_no") {
+      if (
+        trimmed &&
+        (!/^[+0-9\s()-]+$/.test(trimmed) ||
+          trimmed.replace(/\D/g, "").length < 7 ||
+          trimmed.replace(/\D/g, "").length > 15)
+      ) {
+        throw createEmergencyContactError(
+          "INVALID_EMERGENCY_CONTACT_FIELD_VALUE",
+          `${key} must contain a valid phone number`
+        );
+      }
+    }
+
+    const maxLength =
+      key === "contact_name" ? 150 :
+      key === "relation" ? 100 :
+      key === "mobile_no" || key === "alternate_mobile_no" ? 20 :
+      null;
+
+    if (maxLength && trimmed.length > maxLength) {
+      throw createEmergencyContactError(
+        "INVALID_EMERGENCY_CONTACT_FIELD_VALUE",
+        `${key} cannot exceed ${maxLength} characters`
+      );
+    }
+
+    normalized[key] = trimmed;
+  }
+
+  if (!allowPartial) {
+    if (!normalized.contact_name) {
+      throw createEmergencyContactError(
+        "MISSING_EMERGENCY_CONTACT_NAME",
+        "Contact name is required"
+      );
+    }
+
+    if (!normalized.mobile_no) {
+      throw createEmergencyContactError(
+        "MISSING_EMERGENCY_CONTACT_MOBILE",
+        "Mobile number is required"
+      );
+    }
+  }
+
+  return normalized;
+}
+
+// =====================================================
+// EMPLOYEE: SUBMIT EMERGENCY CONTACT REQUEST
+// =====================================================
+
+async function submitEmergencyContactRequest({
+  userId,
+  contactData,
+}) {
+  return knex.transaction(async (trx) => {
+    const user = await trx("users")
+      .where({ id: userId })
+      .forUpdate()
+      .first();
+
+    if (!user) {
+      throw createEmergencyContactError(
+        "PROFILE_NOT_FOUND",
+        "Employee profile was not found"
+      );
+    }
+
+    if (
+      !contactData ||
+      typeof contactData !== "object" ||
+      Array.isArray(contactData)
+    ) {
+      throw createEmergencyContactError(
+        "INVALID_EMERGENCY_CONTACT_DATA",
+        "Please provide valid emergency contact data"
+      );
+    }
+
+    const requestType = String(
+      contactData.request_type || "CREATE"
+    ).toUpperCase();
+
+    if (!["CREATE", "UPDATE", "DELETE"].includes(requestType)) {
+      throw createEmergencyContactError(
+        "INVALID_EMERGENCY_CONTACT_REQUEST_TYPE",
+        "Request type must be CREATE, UPDATE or DELETE"
+      );
+    }
+
+    let recordId = null;
+    let existingData = {};
+    let requestedData = {};
+
+    if (requestType === "CREATE") {
+      if (contactData.id !== undefined) {
+        throw createEmergencyContactError(
+          "INVALID_EMERGENCY_CONTACT_ID",
+          "Do not provide an ID when creating a contact"
+        );
+      }
+
+      const input = { ...contactData };
+      delete input.request_type;
+
+      requestedData = validateEmergencyContactData(input);
+
+      if (requestedData.is_primary === undefined) {
+        requestedData.is_primary = false;
+      }
+
+      if (requestedData.relation === undefined) {
+        requestedData.relation = null;
+      }
+
+      if (requestedData.alternate_mobile_no === undefined) {
+        requestedData.alternate_mobile_no = null;
+      }
+
+      if (requestedData.address === undefined) {
+        requestedData.address = null;
+      }
+    } else {
+      recordId = contactData.id;
+
+      if (
+        recordId === undefined ||
+        recordId === null ||
+        !/^\d+$/.test(String(recordId))
+      ) {
+        throw createEmergencyContactError(
+          "INVALID_EMERGENCY_CONTACT_ID",
+          "A valid emergency contact ID is required"
+        );
+      }
+
+      const existingContact = await trx("employee_emergency_contacts")
+        .where({
+          id: recordId,
+          user_id: userId,
+          status: "ACTIVE",
+        })
+        .forUpdate()
+        .first();
+
+      if (!existingContact) {
+        throw createEmergencyContactError(
+          "EMERGENCY_CONTACT_NOT_FOUND",
+          "Active emergency contact was not found"
+        );
+      }
+
+      existingData = {
+        contact_name: existingContact.contact_name,
+        relation: existingContact.relation,
+        mobile_no: existingContact.mobile_no,
+        alternate_mobile_no: existingContact.alternate_mobile_no,
+        address: existingContact.address,
+        is_primary: existingContact.is_primary,
+      };
+
+      if (requestType === "UPDATE") {
+        const input = { ...contactData };
+        delete input.request_type;
+        delete input.id;
+
+        const changes = validateEmergencyContactData(input, {
+          allowPartial: true,
+        });
+
+        requestedData = {
+          ...existingData,
+          ...changes,
+        };
+
+        // Validate the complete updated contact.
+        requestedData = validateEmergencyContactData(
+          requestedData
+        );
+      } else {
+        const extraFields = Object.keys(contactData).filter(
+          (key) => !["request_type", "id"].includes(key)
+        );
+
+        if (extraFields.length) {
+          throw createEmergencyContactError(
+            "INVALID_EMERGENCY_CONTACT_DATA",
+            "DELETE requests must contain only request_type and id"
+          );
+        }
+
+        requestedData = {};
+      }
+    }
+
+    // Prevent another pending request for the same contact.
+    const pendingRequests = await trx("employee_profile_change_requests")
+      .where({
+        user_id: userId,
+        section: "EMERGENCY_CONTACT",
+        status: "PENDING",
+      })
+      .select("id", "record_id", "request_type");
+
+    const duplicatePending = pendingRequests.some((request) => {
+      if (requestType === "CREATE") {
+        return request.request_type === "CREATE";
+      }
+
+      return String(request.record_id) === String(recordId);
+    });
+
+    if (duplicatePending) {
+      throw createEmergencyContactError(
+        "EMERGENCY_CONTACT_REQUEST_ALREADY_PENDING",
+        "A pending request already exists for this emergency contact"
+      );
+    }
+
+    const [request] = await trx("employee_profile_change_requests")
+      .insert({
+        user_id: userId,
+        section: "EMERGENCY_CONTACT",
+        record_id: recordId,
+        request_type: requestType,
+        existing_data: JSON.stringify(existingData),
+        requested_data: JSON.stringify(requestedData),
+        status: "PENDING",
+      })
+      .returning([
+        "id",
+        "user_id",
+        "section",
+        "record_id",
+        "request_type",
+        "status",
+        "created_at",
+      ]);
+
+    return { request };
+  });
+}
+
+// =====================================================
+// EMPLOYEE: GET MY EMERGENCY CONTACTS
+// =====================================================
+
+async function getMyEmergencyContacts({ userId }) {
+  const user = await knex("users")
+    .where({ id: userId })
+    .first("id");
+
+  if (!user) {
+    throw createEmergencyContactError(
+      "PROFILE_NOT_FOUND",
+      "Employee profile was not found"
+    );
+  }
+
+  const contacts = await knex("employee_emergency_contacts")
+    .where({
+      user_id: userId,
+      status: "ACTIVE",
+    })
+    .select(
+      "id",
+      "contact_name",
+      "relation",
+      "mobile_no",
+      "alternate_mobile_no",
+      "address",
+      "is_primary",
+      "status",
+      "created_at",
+      "updated_at"
+    )
+    .orderBy([
+      { column: "is_primary", order: "desc" },
+      { column: "created_at", order: "asc" },
+    ]);
+
+  const pendingRequests = await knex("employee_profile_change_requests")
+    .where({
+      user_id: userId,
+      section: "EMERGENCY_CONTACT",
+      status: "PENDING",
+    })
+    .select(
+      "id",
+      "record_id",
+      "request_type",
+      "existing_data",
+      "requested_data",
+      "status",
+      "created_at"
+    )
+    .orderBy("created_at", "desc");
+
+  return {
+    contacts,
+    pending_requests: pendingRequests,
+  };
+}
+
+// =====================================================
+// ADMIN: APPROVE EMERGENCY CONTACT REQUEST
+// =====================================================
+
+async function approveEmergencyContactRequest({
+  requestId,
+  adminId,
+  approvalRemarks = null,
+}) {
+  return knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: requestId,
+        section: "EMERGENCY_CONTACT",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createEmergencyContactError(
+        "PROFILE_CHANGE_REQUEST_NOT_FOUND",
+        "Emergency contact request was not found"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createEmergencyContactError(
+        "PROFILE_CHANGE_REQUEST_NOT_PENDING",
+        "This request has already been reviewed"
+      );
+    }
+
+    if (!["CREATE", "UPDATE", "DELETE"].includes(request.request_type)) {
+      throw createEmergencyContactError(
+        "UNSUPPORTED_EMERGENCY_CONTACT_REQUEST",
+        "Unsupported emergency contact request type"
+      );
+    }
+
+    if (
+      approvalRemarks !== null &&
+      (typeof approvalRemarks !== "string" ||
+        approvalRemarks.trim().length > 1000)
+    ) {
+      throw createEmergencyContactError(
+        "INVALID_APPROVAL_REMARKS",
+        "Approval remarks must be a string of up to 1000 characters"
+      );
+    }
+
+    // Serialize approval changes for this employee.
+    const user = await trx("users")
+      .where({ id: request.user_id })
+      .forUpdate()
+      .first("id");
+
+    if (!user) {
+      throw createEmergencyContactError(
+        "PROFILE_NOT_FOUND",
+        "Employee was not found"
+      );
+    }
+
+    const requestedData =
+      typeof request.requested_data === "string"
+        ? JSON.parse(request.requested_data)
+        : request.requested_data || {};
+
+    let contact;
+    let updatedFields = [];
+
+    if (request.request_type === "CREATE") {
+      const data = validateEmergencyContactData(requestedData);
+
+      const insertData = {
+        user_id: request.user_id,
+        contact_name: data.contact_name,
+        relation: data.relation ?? null,
+        mobile_no: data.mobile_no,
+        alternate_mobile_no: data.alternate_mobile_no ?? null,
+        address: data.address ?? null,
+        is_primary: data.is_primary ?? false,
+        status: "ACTIVE",
+      };
+
+      if (insertData.is_primary) {
+        await trx("employee_emergency_contacts")
+          .where({
+            user_id: request.user_id,
+            status: "ACTIVE",
+          })
+          .update({
+            is_primary: false,
+            updated_at: trx.fn.now(),
+          });
+      }
+
+      [contact] = await trx("employee_emergency_contacts")
+        .insert(insertData)
+        .returning([
+          "id",
+          "user_id",
+          "contact_name",
+          "relation",
+          "mobile_no",
+          "alternate_mobile_no",
+          "address",
+          "is_primary",
+          "status",
+        ]);
+
+      updatedFields = Object.keys(insertData).filter(
+        (key) => !["user_id", "status"].includes(key)
+      );
+    } else {
+      const existingContact = await trx("employee_emergency_contacts")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .forUpdate()
+        .first();
+
+      if (!existingContact) {
+        throw createEmergencyContactError(
+          "EMERGENCY_CONTACT_NOT_FOUND",
+          "Emergency contact was not found"
+        );
+      }
+
+      if (existingContact.status !== "ACTIVE") {
+        throw createEmergencyContactError(
+          "EMERGENCY_CONTACT_NOT_ACTIVE",
+          "This emergency contact is no longer active"
+        );
+      }
+
+      if (request.request_type === "UPDATE") {
+        const data = validateEmergencyContactData(requestedData);
+
+        const updateData = {
+          contact_name: data.contact_name,
+          relation: data.relation ?? null,
+          mobile_no: data.mobile_no,
+          alternate_mobile_no: data.alternate_mobile_no ?? null,
+          address: data.address ?? null,
+          is_primary: data.is_primary ?? false,
+          updated_at: trx.fn.now(),
+        };
+
+        if (updateData.is_primary) {
+          await trx("employee_emergency_contacts")
+            .where({
+              user_id: request.user_id,
+              status: "ACTIVE",
+            })
+            .whereNot("id", request.record_id)
+            .update({
+              is_primary: false,
+              updated_at: trx.fn.now(),
+            });
+        }
+
+        await trx("employee_emergency_contacts")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .update(updateData);
+
+        contact = await trx("employee_emergency_contacts")
+          .where({ id: request.record_id })
+          .first(
+            "id",
+            "user_id",
+            "contact_name",
+            "relation",
+            "mobile_no",
+            "alternate_mobile_no",
+            "address",
+            "is_primary",
+            "status"
+          );
+
+        updatedFields = Object.keys(updateData).filter(
+          (key) => key !== "updated_at"
+        );
+      } else {
+        await trx("employee_emergency_contacts")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .update({
+            status: "INACTIVE",
+            is_primary: false,
+            updated_at: trx.fn.now(),
+          });
+
+        contact = {
+          id: String(request.record_id),
+          user_id: String(request.user_id),
+          status: "INACTIVE",
+        };
+
+        updatedFields = ["status", "is_primary"];
+      }
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: requestId })
+      .update({
+        status: "APPROVED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: approvalRemarks
+          ? approvalRemarks.trim()
+          : null,
+        updated_at: trx.fn.now(),
+      })
+      .returning(["id", "user_id", "section", "status"]);
+
+    return {
+      request: updatedRequest,
+      contact,
+      updated_fields: updatedFields,
+    };
+  });
+}
+
+// =====================================================
+// ADMIN: REJECT EMERGENCY CONTACT REQUEST
+// =====================================================
+
+async function rejectEmergencyContactRequest({
+  requestId,
+  adminId,
+  approvalRemarks,
+}) {
+  return knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: requestId,
+        section: "EMERGENCY_CONTACT",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createEmergencyContactError(
+        "PROFILE_CHANGE_REQUEST_NOT_FOUND",
+        "Emergency contact request was not found"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createEmergencyContactError(
+        "PROFILE_CHANGE_REQUEST_NOT_PENDING",
+        "This request has already been reviewed"
+      );
+    }
+
+    if (
+      typeof approvalRemarks !== "string" ||
+      !approvalRemarks.trim() ||
+      approvalRemarks.trim().length > 1000
+    ) {
+      throw createEmergencyContactError(
+        "INVALID_APPROVAL_REMARKS",
+        "Please provide rejection remarks (maximum 1000 characters)"
+      );
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: requestId })
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: approvalRemarks.trim(),
+        updated_at: trx.fn.now(),
+      })
+      .returning([
+        "id",
+        "user_id",
+        "section",
+        "status",
+        "reviewed_by",
+        "approval_remarks",
+      ]);
+
+    return { request: updatedRequest };
+  });
+}
+
+
+// =====================================================
+// FAMILY MEMBER DETAILS
+// =====================================================
+
+const FAMILY_MEMBER_FIELDS = [
+  "name",
+  "relation",
+  "gender",
+  "date_of_birth",
+  "profession",
+  "family_member_type",
+  "address",
+  "remarks",
+];
+
+const FAMILY_MEMBER_TYPES = [
+  "FAMILY_MEMBER",
+  "DEPENDENT",
+];
+
+function createFamilyMemberError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+// =====================================================
+// VALIDATE FAMILY MEMBER DATA
+// =====================================================
+
+function validateFamilyMemberData(data, options = {}) {
+  const { allowPartial = false } = options;
+
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw createFamilyMemberError(
+      "INVALID_FAMILY_MEMBER_DATA",
+      "Family member data must be a valid object"
+    );
+  }
+
+  const keys = Object.keys(data);
+
+  if (!keys.length) {
+    throw createFamilyMemberError(
+      "EMPTY_FAMILY_MEMBER_DATA",
+      "Please provide family member details"
+    );
+  }
+
+  const normalized = {};
+
+  for (const key of keys) {
+    if (!FAMILY_MEMBER_FIELDS.includes(key)) {
+      throw createFamilyMemberError(
+        "INVALID_FAMILY_MEMBER_FIELD",
+        `Field '${key}' is not allowed`
+      );
+    }
+
+    const value = data[key];
+
+    if (key === "date_of_birth") {
+      if (value === null || value === "") {
+        normalized[key] = null;
+        continue;
+      }
+
+      if (
+        typeof value !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(value)
+      ) {
+        throw createFamilyMemberError(
+          "INVALID_FAMILY_MEMBER_FIELD_VALUE",
+          "date_of_birth must be in YYYY-MM-DD format"
+        );
+      }
+
+      const parsedDate = new Date(`${value}T00:00:00.000Z`);
+
+      if (
+        Number.isNaN(parsedDate.getTime()) ||
+        parsedDate.toISOString().slice(0, 10) !== value
+      ) {
+        throw createFamilyMemberError(
+          "INVALID_FAMILY_MEMBER_FIELD_VALUE",
+          "Please provide a valid date of birth"
+        );
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+
+      if (value > today) {
+        throw createFamilyMemberError(
+          "INVALID_FAMILY_MEMBER_FIELD_VALUE",
+          "Date of birth cannot be in the future"
+        );
+      }
+
+      normalized[key] = value;
+      continue;
+    }
+
+    if (value === null || value === "") {
+      if (["name", "relation", "family_member_type"].includes(key)) {
+        throw createFamilyMemberError(
+          "INVALID_FAMILY_MEMBER_FIELD_VALUE",
+          `${key} cannot be empty`
+        );
+      }
+
+      normalized[key] = null;
+      continue;
+    }
+
+    if (typeof value !== "string") {
+      throw createFamilyMemberError(
+        "INVALID_FAMILY_MEMBER_FIELD_VALUE",
+        `${key} must be a string`
+      );
+    }
+
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      if (["name", "relation", "family_member_type"].includes(key)) {
+        throw createFamilyMemberError(
+          "INVALID_FAMILY_MEMBER_FIELD_VALUE",
+          `${key} cannot be empty`
+        );
+      }
+
+      normalized[key] = null;
+      continue;
+    }
+
+    const maxLengths = {
+      name: 150,
+      relation: 100,
+      gender: 20,
+      profession: 150,
+      family_member_type: 30,
+    };
+
+    if (
+      maxLengths[key] &&
+      trimmed.length > maxLengths[key]
+    ) {
+      throw createFamilyMemberError(
+        "INVALID_FAMILY_MEMBER_FIELD_VALUE",
+        `${key} cannot exceed ${maxLengths[key]} characters`
+      );
+    }
+
+    if (
+      key === "family_member_type" &&
+      !FAMILY_MEMBER_TYPES.includes(trimmed.toUpperCase())
+    ) {
+      throw createFamilyMemberError(
+        "INVALID_FAMILY_MEMBER_TYPE",
+        "family_member_type must be FAMILY_MEMBER or DEPENDENT"
+      );
+    }
+
+    normalized[key] =
+      key === "family_member_type"
+        ? trimmed.toUpperCase()
+        : trimmed;
+  }
+
+  if (!allowPartial) {
+    for (const requiredField of [
+      "name",
+      "relation",
+      "family_member_type",
+    ]) {
+      if (!normalized[requiredField]) {
+        throw createFamilyMemberError(
+          "MISSING_FAMILY_MEMBER_FIELD",
+          `${requiredField} is required`
+        );
+      }
+    }
+  }
+
+  return normalized;
+}
+
+// =====================================================
+// EMPLOYEE: SUBMIT FAMILY MEMBER REQUEST
+// =====================================================
+
+async function submitFamilyMemberRequest({
+  userId,
+  familyMemberData,
+}) {
+  return knex.transaction(async (trx) => {
+    const user = await trx("users")
+      .where({ id: userId })
+      .forUpdate()
+      .first("id");
+
+    if (!user) {
+      throw createFamilyMemberError(
+        "PROFILE_NOT_FOUND",
+        "Employee was not found"
+      );
+    }
+
+    if (
+      !familyMemberData ||
+      typeof familyMemberData !== "object" ||
+      Array.isArray(familyMemberData)
+    ) {
+      throw createFamilyMemberError(
+        "INVALID_FAMILY_MEMBER_DATA",
+        "Please provide valid family member data"
+      );
+    }
+
+    const requestType = String(
+      familyMemberData.request_type || "CREATE"
+    ).toUpperCase();
+
+    if (!["CREATE", "UPDATE", "DELETE"].includes(requestType)) {
+      throw createFamilyMemberError(
+        "INVALID_FAMILY_MEMBER_REQUEST_TYPE",
+        "Request type must be CREATE, UPDATE or DELETE"
+      );
+    }
+
+    let recordId = null;
+    let existingData = {};
+    let requestedData = {};
+
+    if (requestType === "CREATE") {
+      if (familyMemberData.id !== undefined) {
+        throw createFamilyMemberError(
+          "INVALID_FAMILY_MEMBER_ID",
+          "Do not provide an ID when creating a family member"
+        );
+      }
+
+      const input = { ...familyMemberData };
+      delete input.request_type;
+
+      requestedData = validateFamilyMemberData(input);
+
+      // Optional fields are stored consistently.
+      for (const field of FAMILY_MEMBER_FIELDS) {
+        if (requestedData[field] === undefined) {
+          requestedData[field] = null;
+        }
+      }
+    } else {
+      recordId = familyMemberData.id;
+
+      if (
+        recordId === undefined ||
+        recordId === null ||
+        !/^\d+$/.test(String(recordId))
+      ) {
+        throw createFamilyMemberError(
+          "INVALID_FAMILY_MEMBER_ID",
+          "A valid family member ID is required"
+        );
+      }
+
+      const existingMember = await trx("employee_family_members")
+        .where({
+          id: recordId,
+          user_id: userId,
+          status: "ACTIVE",
+        })
+        .forUpdate()
+        .first();
+
+      if (!existingMember) {
+        throw createFamilyMemberError(
+          "FAMILY_MEMBER_NOT_FOUND",
+          "Active family member was not found"
+        );
+      }
+
+      existingData = {
+        name: existingMember.name,
+        relation: existingMember.relation,
+        gender: existingMember.gender,
+        date_of_birth: existingMember.date_of_birth
+          ? String(existingMember.date_of_birth).slice(0, 10)
+          : null,
+        profession: existingMember.profession,
+        family_member_type: existingMember.family_member_type,
+        address: existingMember.address,
+        remarks: existingMember.remarks,
+      };
+
+      if (requestType === "UPDATE") {
+        const input = { ...familyMemberData };
+        delete input.request_type;
+        delete input.id;
+
+        const changes = validateFamilyMemberData(input, {
+          allowPartial: true,
+        });
+
+        requestedData = validateFamilyMemberData({
+          ...existingData,
+          ...changes,
+        });
+      } else {
+        const extraFields = Object.keys(familyMemberData).filter(
+          (key) => !["request_type", "id"].includes(key)
+        );
+
+        if (extraFields.length) {
+          throw createFamilyMemberError(
+            "INVALID_FAMILY_MEMBER_DATA",
+            "DELETE requests must contain only request_type and id"
+          );
+        }
+
+        requestedData = {};
+      }
+    }
+
+    // Prevent multiple pending requests for the same existing record.
+    // Multiple CREATE requests are allowed for different family members.
+    if (requestType !== "CREATE") {
+      const pendingRequest = await trx(
+        "employee_profile_change_requests"
+      )
+        .where({
+          user_id: userId,
+          section: "FAMILY_MEMBER",
+          record_id: recordId,
+          status: "PENDING",
+        })
+        .first("id");
+
+      if (pendingRequest) {
+        throw createFamilyMemberError(
+          "FAMILY_MEMBER_REQUEST_ALREADY_PENDING",
+          "A pending request already exists for this family member"
+        );
+      }
+    }
+
+    const [request] = await trx(
+      "employee_profile_change_requests"
+    )
+      .insert({
+        user_id: userId,
+        section: "FAMILY_MEMBER",
+        record_id: recordId,
+        request_type: requestType,
+        existing_data: JSON.stringify(existingData),
+        requested_data: JSON.stringify(requestedData),
+        status: "PENDING",
+      })
+      .returning([
+        "id",
+        "user_id",
+        "section",
+        "record_id",
+        "request_type",
+        "status",
+        "created_at",
+      ]);
+
+    return { request };
+  });
+}
+
+// =====================================================
+// EMPLOYEE: GET MY FAMILY MEMBERS
+// =====================================================
+
+async function getMyFamilyMembers({ userId }) {
+  const user = await knex("users")
+    .where({ id: userId })
+    .first("id");
+
+  if (!user) {
+    throw createFamilyMemberError(
+      "PROFILE_NOT_FOUND",
+      "Employee was not found"
+    );
+  }
+
+  const familyMembers = await knex("employee_family_members")
+    .where({
+      user_id: userId,
+      status: "ACTIVE",
+    })
+    .select(
+      "id",
+      "name",
+      "relation",
+      "gender",
+      "date_of_birth",
+      "profession",
+      "family_member_type",
+      "address",
+      "status",
+      "remarks",
+      "created_at",
+      "updated_at"
+    )
+    .orderBy("created_at", "asc");
+
+  const pendingRequests = await knex(
+    "employee_profile_change_requests"
+  )
+    .where({
+      user_id: userId,
+      section: "FAMILY_MEMBER",
+      status: "PENDING",
+    })
+    .select(
+      "id",
+      "record_id",
+      "request_type",
+      "existing_data",
+      "requested_data",
+      "status",
+      "created_at"
+    )
+    .orderBy("created_at", "desc");
+
+  return {
+    family_members: familyMembers,
+    pending_requests: pendingRequests,
+  };
+}
+
+// =====================================================
+// ADMIN: APPROVE FAMILY MEMBER REQUEST
+// =====================================================
+
+async function approveFamilyMemberRequest({
+  requestId,
+  adminId,
+  approvalRemarks = null,
+}) {
+  return knex.transaction(async (trx) => {
+    const request = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({
+        id: requestId,
+        section: "FAMILY_MEMBER",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createFamilyMemberError(
+        "PROFILE_CHANGE_REQUEST_NOT_FOUND",
+        "Family member request was not found"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createFamilyMemberError(
+        "PROFILE_CHANGE_REQUEST_NOT_PENDING",
+        "This request has already been reviewed"
+      );
+    }
+
+    if (!["CREATE", "UPDATE", "DELETE"].includes(request.request_type)) {
+      throw createFamilyMemberError(
+        "UNSUPPORTED_FAMILY_MEMBER_REQUEST",
+        "Unsupported family member request type"
+      );
+    }
+
+    if (
+      approvalRemarks !== null &&
+      (typeof approvalRemarks !== "string" ||
+        approvalRemarks.trim().length > 1000)
+    ) {
+      throw createFamilyMemberError(
+        "INVALID_APPROVAL_REMARKS",
+        "Approval remarks must be a string of up to 1000 characters"
+      );
+    }
+
+    // Serialize approvals for this employee.
+    const user = await trx("users")
+      .where({ id: request.user_id })
+      .forUpdate()
+      .first("id");
+
+    if (!user) {
+      throw createFamilyMemberError(
+        "PROFILE_NOT_FOUND",
+        "Employee was not found"
+      );
+    }
+
+    const requestedData =
+      typeof request.requested_data === "string"
+        ? JSON.parse(request.requested_data)
+        : request.requested_data || {};
+
+    let familyMember;
+    let updatedFields = [];
+
+    if (request.request_type === "CREATE") {
+      const data = validateFamilyMemberData(requestedData);
+
+      const insertData = {
+        user_id: request.user_id,
+        name: data.name,
+        relation: data.relation,
+        gender: data.gender ?? null,
+        date_of_birth: data.date_of_birth ?? null,
+        profession: data.profession ?? null,
+        family_member_type: data.family_member_type,
+        address: data.address ?? null,
+        status: "ACTIVE",
+        remarks: data.remarks ?? null,
+      };
+
+      [familyMember] = await trx("employee_family_members")
+        .insert(insertData)
+        .returning([
+          "id",
+          "user_id",
+          "name",
+          "relation",
+          "gender",
+          "date_of_birth",
+          "profession",
+          "family_member_type",
+          "address",
+          "status",
+          "remarks",
+        ]);
+
+      updatedFields = Object.keys(insertData).filter(
+        (key) => key !== "user_id"
+      );
+    } else {
+      const existingMember = await trx("employee_family_members")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .forUpdate()
+        .first();
+
+      if (!existingMember) {
+        throw createFamilyMemberError(
+          "FAMILY_MEMBER_NOT_FOUND",
+          "Family member was not found"
+        );
+      }
+
+      if (existingMember.status !== "ACTIVE") {
+        throw createFamilyMemberError(
+          "FAMILY_MEMBER_NOT_ACTIVE",
+          "This family member is no longer active"
+        );
+      }
+
+      if (request.request_type === "UPDATE") {
+        const data = validateFamilyMemberData(requestedData);
+
+        const updateData = {
+          name: data.name,
+          relation: data.relation,
+          gender: data.gender ?? null,
+          date_of_birth: data.date_of_birth ?? null,
+          profession: data.profession ?? null,
+          family_member_type: data.family_member_type,
+          address: data.address ?? null,
+          remarks: data.remarks ?? null,
+          updated_at: trx.fn.now(),
+        };
+
+        await trx("employee_family_members")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .update(updateData);
+
+        familyMember = await trx("employee_family_members")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .first(
+            "id",
+            "user_id",
+            "name",
+            "relation",
+            "gender",
+            "date_of_birth",
+            "profession",
+            "family_member_type",
+            "address",
+            "status",
+            "remarks"
+          );
+
+        updatedFields = Object.keys(updateData).filter(
+          (key) => key !== "updated_at"
+        );
+      } else {
+        await trx("employee_family_members")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .update({
+            status: "INACTIVE",
+            updated_at: trx.fn.now(),
+          });
+
+        familyMember = {
+          id: String(request.record_id),
+          user_id: String(request.user_id),
+          status: "INACTIVE",
+        };
+
+        updatedFields = ["status"];
+      }
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: requestId })
+      .update({
+        status: "APPROVED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: approvalRemarks
+          ? approvalRemarks.trim()
+          : null,
+        updated_at: trx.fn.now(),
+      })
+      .returning([
+        "id",
+        "user_id",
+        "section",
+        "status",
+      ]);
+
+    return {
+      request: updatedRequest,
+      family_member: familyMember,
+      updated_fields: updatedFields,
+    };
+  });
+}
+
+// =====================================================
+// ADMIN: REJECT FAMILY MEMBER REQUEST
+// =====================================================
+
+async function rejectFamilyMemberRequest({
+  requestId,
+  adminId,
+  approvalRemarks,
+}) {
+  return knex.transaction(async (trx) => {
+    const request = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({
+        id: requestId,
+        section: "FAMILY_MEMBER",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createFamilyMemberError(
+        "PROFILE_CHANGE_REQUEST_NOT_FOUND",
+        "Family member request was not found"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createFamilyMemberError(
+        "PROFILE_CHANGE_REQUEST_NOT_PENDING",
+        "This request has already been reviewed"
+      );
+    }
+
+    if (
+      typeof approvalRemarks !== "string" ||
+      !approvalRemarks.trim() ||
+      approvalRemarks.trim().length > 1000
+    ) {
+      throw createFamilyMemberError(
+        "INVALID_APPROVAL_REMARKS",
+        "Please provide rejection remarks (maximum 1000 characters)"
+      );
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: requestId })
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: approvalRemarks.trim(),
+        updated_at: trx.fn.now(),
+      })
+      .returning([
+        "id",
+        "user_id",
+        "section",
+        "status",
+        "reviewed_by",
+        "approval_remarks",
+      ]);
+
+    return { request: updatedRequest };
+  });
+}
+
+
+
+
 module.exports = {
   getMyEmployeeProfile,
   uploadMyProfilePicture,
@@ -1487,5 +3487,22 @@ module.exports = {
   approvePersonalDetailsRequest,
   rejectPersonalDetailsRequest,
   getAdminProfileChangeRequestById,
+
+  rejectAddressRequest,
+  approveAddressRequest,
+  getMyAddresses,
+  submitAddressRequest,
+
+  submitEmergencyContactRequest,
+  getMyEmergencyContacts,
+  approveEmergencyContactRequest,
+  rejectEmergencyContactRequest,
+
+  rejectFamilyMemberRequest,
+  approveFamilyMemberRequest,
+  getMyFamilyMembers,
+  submitFamilyMemberRequest
+
+
 
 };

@@ -76,4 +76,113 @@ router.patch(
   employeeProfileController.rejectPersonalDetailsRequest
 );
 
+
+
+// =====================================================
+// EMPLOYEE ADDRESS ROUTES
+// =====================================================
+
+// GET MY ADDRESSES
+router.get(
+  "/me/addresses",
+  userAuthorize(),
+  employeeProfileController.getMyAddresses
+);
+
+// SUBMIT ADDRESS CHANGE REQUEST
+router.post(
+  "/me/addresses/request",
+  userAuthorize(),
+  employeeProfileController.submitAddressRequest
+);
+
+
+// =====================================================
+// ADMIN ADDRESS APPROVAL ROUTES
+// =====================================================
+
+// APPROVE ADDRESS REQUEST
+router.patch(
+  "/admin/requests/:id/address/approve",
+  adminAuthorize(),
+  employeeProfileController.approveAddressRequest
+);
+
+// REJECT ADDRESS REQUEST
+router.patch(
+  "/admin/requests/:id/address/reject",
+  adminAuthorize(),
+  employeeProfileController.rejectAddressRequest
+);
+
+
+// =====================================================
+// EMPLOYEE EMERGENCY CONTACT ROUTES
+// =====================================================
+
+router.get(
+  "/me/emergency-contacts",
+  userAuthorize(),
+  employeeProfileController.getMyEmergencyContacts
+);
+
+router.post(
+  "/me/emergency-contacts/request",
+  userAuthorize(),
+  employeeProfileController.submitEmergencyContactRequest
+);
+
+
+// =====================================================
+// ADMIN EMERGENCY CONTACT APPROVAL ROUTES
+// =====================================================
+
+router.patch(
+  "/admin/requests/:id/emergency-contact/approve",
+  adminAuthorize(),
+  employeeProfileController.approveEmergencyContactRequest
+);
+
+router.patch(
+  "/admin/requests/:id/emergency-contact/reject",
+  adminAuthorize(),
+  employeeProfileController.rejectEmergencyContactRequest
+);
+
+
+// =====================================================
+// EMPLOYEE FAMILY MEMBER ROUTES
+// =====================================================
+
+router.get(
+  "/me/family-members",
+  userAuthorize(),
+  employeeProfileController.getMyFamilyMembers
+);
+
+router.post(
+  "/me/family-members/request",
+  userAuthorize(),
+  employeeProfileController.submitFamilyMemberRequest
+);
+
+
+
+// =====================================================
+// ADMIN FAMILY MEMBER APPROVAL ROUTES
+// =====================================================
+
+router.patch(
+  "/admin/requests/:id/family-member/approve",
+  adminAuthorize(),
+  employeeProfileController.approveFamilyMemberRequest
+);
+
+router.patch(
+  "/admin/requests/:id/family-member/reject",
+  adminAuthorize(),
+  employeeProfileController.rejectFamilyMemberRequest
+);
+
+
 module.exports = router;
