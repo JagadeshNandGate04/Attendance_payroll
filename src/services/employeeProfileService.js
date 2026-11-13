@@ -38,6 +38,124 @@ function sanitizeSensitiveData(value) {
   return value;
 }
 
+
+
+// =====================================================
+// HELPER - CALCULATE CURRENT COMPANY EXPERIENCE
+// =====================================================
+
+function calculateCurrentCompanyExperience(dateOfJoining) {
+  if (!dateOfJoining) return null;
+
+  let joiningDate;
+
+  if (dateOfJoining instanceof Date) {
+    joiningDate = dateOfJoining.toISOString().slice(0, 10);
+  } else {
+    joiningDate = String(dateOfJoining).slice(0, 10);
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate)) {
+    return null;
+  }
+
+  const [startYear, startMonth, startDay] =
+    joiningDate.split("-").map(Number);
+
+  const start = new Date(
+    Date.UTC(startYear, startMonth - 1, startDay)
+  );
+
+  // Validate joining date
+  if (
+    start.getUTCFullYear() !== startYear ||
+    start.getUTCMonth() !== startMonth - 1 ||
+    start.getUTCDate() !== startDay
+  ) {
+    return null;
+  }
+
+  // Get today's date in Asia/Kolkata
+  const todayParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const todayValues = {};
+
+  todayParts.forEach((part) => {
+    if (part.type !== "literal") {
+      todayValues[part.type] = Number(part.value);
+    }
+  });
+
+  const today = new Date(
+    Date.UTC(
+      todayValues.year,
+      todayValues.month - 1,
+      todayValues.day
+    )
+  );
+
+  // Joining date cannot be in the future
+  if (start > today) return null;
+
+  // Add months while keeping the day within the target month
+  function addMonthsClamped(date, months) {
+    const targetMonth =
+      date.getUTCMonth() + months;
+
+    const targetYear =
+      date.getUTCFullYear() +
+      Math.floor(targetMonth / 12);
+
+    const normalizedMonth =
+      ((targetMonth % 12) + 12) % 12;
+
+    const lastDay = new Date(
+      Date.UTC(targetYear, normalizedMonth + 1, 0)
+    ).getUTCDate();
+
+    return new Date(
+      Date.UTC(
+        targetYear,
+        normalizedMonth,
+        Math.min(date.getUTCDate(), lastDay)
+      )
+    );
+  }
+
+  let totalMonths =
+    (today.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+    (today.getUTCMonth() - start.getUTCMonth());
+
+  if (addMonthsClamped(start, totalMonths) > today) {
+    totalMonths--;
+  }
+
+  const years = Math.floor(totalMonths / 12);
+  const months = totalMonths % 12;
+
+  const lastAnniversary = addMonthsClamped(
+    start,
+    totalMonths
+  );
+
+  const days = Math.floor(
+    (today.getTime() - lastAnniversary.getTime()) /
+      (1000 * 60 * 60 * 24)
+  );
+
+  return {
+    years,
+    months,
+    days,
+  };
+}
+
+
 // =====================================================
 // GET MY EMPLOYEE PROFILE
 // =====================================================
@@ -55,8 +173,9 @@ async function getMyEmployeeProfile({ userId }) {
 
   const normalizedUserId = Number(userId);
 
+  // =====================================================
   // FETCH EMPLOYEE AND PROFILE
-  
+  // =====================================================
 
   const employee = await knex("users as u")
     .leftJoin(
@@ -102,7 +221,10 @@ async function getMyEmployeeProfile({ userId }) {
     .where("u.id", normalizedUserId)
     .first();
 
-  if (!employee || String(employee.role).toUpperCase() !== "EMPLOYEE") {
+  if (
+    !employee ||
+    String(employee.role).toUpperCase() !== "EMPLOYEE"
+  ) {
     const error = new Error("Employee not found");
     error.code = "EMPLOYEE_NOT_FOUND";
     throw error;
@@ -114,8 +236,10 @@ async function getMyEmployeeProfile({ userId }) {
     throw error;
   }
 
+  // =====================================================
   // FETCH ALL PROFILE SECTIONS
- 
+  // =====================================================
+
   const [
     addresses,
     emergencyContacts,
@@ -127,6 +251,7 @@ async function getMyEmployeeProfile({ userId }) {
     bankDetails,
     documents,
     pendingRequests,
+    latestDesignationHistory,
   ] = await Promise.all([
 
     // ADDRESSES
@@ -203,7 +328,7 @@ async function getMyEmployeeProfile({ userId }) {
       .where({ user_id: normalizedUserId })
       .orderBy("to_year", "desc"),
 
-    // WORK EXPERIENCES
+    // PREVIOUS WORK EXPERIENCES
     knex("employee_work_experiences")
       .select(
         "id",
@@ -322,9 +447,23 @@ async function getMyEmployeeProfile({ userId }) {
         status: "PENDING",
       })
       .orderBy("created_at", "desc"),
+
+    // LATEST DESIGNATION HISTORY
+    knex("employee_designation_history")
+      .select(
+        knex.raw(
+          "effective_date::text as effective_date"
+        )
+      )
+      .where({ user_id: normalizedUserId })
+      .orderBy("effective_date", "desc")
+      .orderBy("id", "desc")
+      .first(),
   ]);
 
-  // RESPONSE
+  // =====================================================
+  // PREPARE EMPLOYEE RESPONSE
+  // =====================================================
 
   const {
     profile_id,
@@ -334,6 +473,35 @@ async function getMyEmployeeProfile({ userId }) {
     ...employeeData
   } = employee;
 
+  // =====================================================
+  // CURRENT COMPANY EXPERIENCE
+  // Calculated from original date of joining.
+  // =====================================================
+
+  employeeData.current_company_experience =
+    calculateCurrentCompanyExperience(
+      employee.date_of_joining
+    );
+
+  // =====================================================
+  // CURRENT DESIGNATION EXPERIENCE
+  // Calculated from latest effective designation date.
+  // If no history exists, use date of joining.
+  // =====================================================
+
+  const designationStartDate =
+    latestDesignationHistory?.effective_date ||
+    employee.date_of_joining;
+
+  employeeData.current_designation_experience =
+    calculateCurrentCompanyExperience(
+      designationStartDate
+    );
+
+  // =====================================================
+  // RESPONSE
+  // =====================================================
+
   return {
     success: true,
     message: "Employee profile fetched successfully",
@@ -342,13 +510,13 @@ async function getMyEmployeeProfile({ userId }) {
 
       profile: {
         profile_picture: {
-  available: Boolean(profile_picture_mime_type),
-  mime_type: profile_picture_mime_type,
-  size_bytes: profile_picture_size_bytes,
-  url: profile_picture_mime_type
-    ? "/api/v1/employee-profile/me/profile-picture"
-    : null,
-},
+          available: Boolean(profile_picture_mime_type),
+          mime_type: profile_picture_mime_type,
+          size_bytes: profile_picture_size_bytes,
+          url: profile_picture_mime_type
+            ? "/api/v1/employee-profile/me/profile-picture"
+            : null,
+        },
 
         marital_status: employee.marital_status,
         father_spouse_name: employee.father_spouse_name,
@@ -375,13 +543,19 @@ async function getMyEmployeeProfile({ userId }) {
       },
 
       addresses,
+
       emergency_contacts: emergencyContacts,
+
       family_members: familyMembers,
+
       qualifications,
+
       work_experiences: workExperiences,
 
       identity_details: identityDetails || null,
+
       statutory_details: statutoryDetails || null,
+
       bank_details: bankDetails || null,
 
       documents,
@@ -398,6 +572,7 @@ async function getMyEmployeeProfile({ userId }) {
     },
   };
 }
+
 
 
 
@@ -3475,6 +3650,1380 @@ async function rejectFamilyMemberRequest({
   });
 }
 
+// =====================================================
+// EMPLOYEE QUALIFICATION APPROVAL WORKFLOW
+// =====================================================
+
+const QUALIFICATION_FIELDS = [
+  "qualification_type",
+  "qualification",
+  "institute_name",
+  "specialization",
+  "from_year",
+  "to_year",
+  "remarks",
+];
+
+function createQualificationError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+// -----------------------------------------------------
+// VALIDATE QUALIFICATION DATA
+// -----------------------------------------------------
+
+function validateQualificationData(data, { isCreate = false } = {}) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw createQualificationError(
+      "INVALID_QUALIFICATION_DATA",
+      "Qualification data must be an object."
+    );
+  }
+
+  const keys = Object.keys(data);
+
+  if (!keys.length) {
+    throw createQualificationError(
+      "EMPTY_QUALIFICATION_DATA",
+      "Please provide at least one qualification field."
+    );
+  }
+
+  const invalidFields = keys.filter(
+    (key) => !QUALIFICATION_FIELDS.includes(key)
+  );
+
+  if (invalidFields.length) {
+    throw createQualificationError(
+      "INVALID_QUALIFICATION_FIELDS",
+      `Invalid qualification fields: ${invalidFields.join(", ")}`
+    );
+  }
+
+  const result = {};
+
+  for (const field of QUALIFICATION_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(data, field)) {
+      continue;
+    }
+
+    const value = data[field];
+
+    if (field === "from_year" || field === "to_year") {
+      if (value === null || value === "") {
+        result[field] = null;
+        continue;
+      }
+
+      const year = Number(value);
+
+      if (
+        !Number.isInteger(year) ||
+        year < 1900 ||
+        year > 2100
+      ) {
+        throw createQualificationError(
+          "INVALID_QUALIFICATION_YEAR",
+          `${field} must be a valid year between 1900 and 2100.`
+        );
+      }
+
+      result[field] = year;
+      continue;
+    }
+
+    if (value === null || value === "") {
+      if (
+        field === "qualification_type" ||
+        field === "qualification"
+      ) {
+        throw createQualificationError(
+          "REQUIRED_QUALIFICATION_FIELD",
+          `${field} is required.`
+        );
+      }
+
+      result[field] = null;
+      continue;
+    }
+
+    if (typeof value !== "string") {
+      throw createQualificationError(
+        "INVALID_QUALIFICATION_FIELD",
+        `${field} must be a string.`
+      );
+    }
+
+    const trimmedValue = value.trim();
+
+    const maxLengths = {
+      qualification_type: 30,
+      qualification: 200,
+      institute_name: 255,
+      specialization: 200,
+    };
+
+    if (
+      maxLengths[field] &&
+      trimmedValue.length > maxLengths[field]
+    ) {
+      throw createQualificationError(
+        "QUALIFICATION_FIELD_TOO_LONG",
+        `${field} cannot exceed ${maxLengths[field]} characters.`
+      );
+    }
+
+    result[field] = trimmedValue || null;
+  }
+
+  if (isCreate) {
+    if (!result.qualification_type || !result.qualification) {
+      throw createQualificationError(
+        "REQUIRED_QUALIFICATION_FIELD",
+        "qualification_type and qualification are required."
+      );
+    }
+  }
+
+  const fromYear =
+    result.from_year !== undefined
+      ? result.from_year
+      : data.from_year;
+
+  const toYear =
+    result.to_year !== undefined
+      ? result.to_year
+      : data.to_year;
+
+  if (
+    fromYear != null &&
+    toYear != null &&
+    Number(fromYear) > Number(toYear)
+  ) {
+    throw createQualificationError(
+      "INVALID_QUALIFICATION_YEAR_RANGE",
+      "from_year cannot be greater than to_year."
+    );
+  }
+
+  return result;
+}
+
+// -----------------------------------------------------
+// EMPLOYEE: SUBMIT QUALIFICATION REQUEST
+// -----------------------------------------------------
+
+async function submitQualificationRequest({
+  userId,
+  qualificationData,
+}) {
+  return knex.transaction(async (trx) => {
+    await trx("users")
+      .where({ id: userId })
+      .forUpdate()
+      .first();
+
+    const requestType = String(
+      qualificationData?.request_type || ""
+    ).toUpperCase();
+
+    if (!["CREATE", "UPDATE", "DELETE"].includes(requestType)) {
+      throw createQualificationError(
+        "INVALID_REQUEST_TYPE",
+        "request_type must be CREATE, UPDATE or DELETE."
+      );
+    }
+
+    let recordId = null;
+    let existingData = null;
+    let requestedData = null;
+
+    if (requestType === "CREATE") {
+      const input = { ...qualificationData };
+      delete input.request_type;
+      delete input.id;
+
+      requestedData = validateQualificationData(input, {
+        isCreate: true,
+      });
+
+      // Optional fields should be stored consistently.
+      for (const field of QUALIFICATION_FIELDS) {
+        if (requestedData[field] === undefined) {
+          requestedData[field] = null;
+        }
+      }
+    } else {
+      recordId = Number(qualificationData?.id);
+
+      if (!Number.isInteger(recordId) || recordId <= 0) {
+        throw createQualificationError(
+          "INVALID_QUALIFICATION_ID",
+          "A valid qualification id is required."
+        );
+      }
+
+      const existing = await trx("employee_qualifications")
+        .where({
+          id: recordId,
+          user_id: userId,
+          status: "ACTIVE",
+        })
+        .forUpdate()
+        .first();
+
+      if (!existing) {
+        throw createQualificationError(
+          "QUALIFICATION_NOT_FOUND",
+          "Qualification record not found."
+        );
+      }
+
+      existingData = {};
+
+      for (const field of QUALIFICATION_FIELDS) {
+        existingData[field] = existing[field] ?? null;
+      }
+
+      const pendingRequest = await trx(
+        "employee_profile_change_requests"
+      )
+        .where({
+          user_id: userId,
+          section: "QUALIFICATION",
+          record_id: recordId,
+          status: "PENDING",
+        })
+        .first();
+
+      if (pendingRequest) {
+        throw createQualificationError(
+          "QUALIFICATION_REQUEST_ALREADY_PENDING",
+          "A pending request already exists for this qualification."
+        );
+      }
+
+      if (requestType === "UPDATE") {
+        const input = { ...qualificationData };
+        delete input.request_type;
+        delete input.id;
+
+        const changes = validateQualificationData(input);
+
+        requestedData = validateQualificationData(
+          {
+            ...existingData,
+            ...changes,
+          },
+          { isCreate: true }
+        );
+
+        // Preserve all fields in the requested snapshot.
+        for (const field of QUALIFICATION_FIELDS) {
+          if (requestedData[field] === undefined) {
+            requestedData[field] = null;
+          }
+        }
+      } else {
+        // DELETE does not accept additional editable fields.
+        const extraFields = Object.keys(qualificationData).filter(
+          (field) => !["request_type", "id"].includes(field)
+        );
+
+        if (extraFields.length) {
+          throw createQualificationError(
+            "INVALID_DELETE_DATA",
+            "DELETE requests should contain only request_type and id."
+          );
+        }
+
+        requestedData = null;
+      }
+    }
+
+    const [request] = await trx(
+      "employee_profile_change_requests"
+    )
+      
+.insert({
+  user_id: userId,
+  section: "QUALIFICATION",
+  record_id: recordId,
+  request_type: requestType,
+
+  existing_data: JSON.stringify(existingData || {}),
+
+  requested_data: requestedData
+    ? JSON.stringify(requestedData)
+    : null,
+
+  status: "PENDING",
+  created_at: trx.fn.now(),
+  updated_at: trx.fn.now(),
+      })
+      .returning("*");
+
+    return {
+      request,
+      message: "Qualification change request submitted successfully.",
+    };
+  });
+}
+
+// -----------------------------------------------------
+// EMPLOYEE: GET MY QUALIFICATIONS
+// -----------------------------------------------------
+
+async function getMyQualifications({ userId }) {
+  const [qualifications, pendingRequests] = await Promise.all([
+    knex("employee_qualifications")
+      .where({
+        user_id: userId,
+        status: "ACTIVE",
+      })
+      .select(
+        "id",
+        "qualification_type",
+        "qualification",
+        "institute_name",
+        "specialization",
+        "from_year",
+        "to_year",
+        "status",
+        "remarks",
+        "created_at",
+        "updated_at"
+      )
+      .orderBy("to_year", "desc"),
+
+    knex("employee_profile_change_requests")
+      .where({
+        user_id: userId,
+        section: "QUALIFICATION",
+        status: "PENDING",
+      })
+      .select(
+        "id",
+        "record_id",
+        "request_type",
+        "existing_data",
+        "requested_data",
+        "status",
+        "created_at"
+      )
+      .orderBy("created_at", "desc"),
+  ]);
+
+  return {
+    qualifications,
+    pending_requests: pendingRequests,
+  };
+}
+
+// -----------------------------------------------------
+// ADMIN: APPROVE QUALIFICATION REQUEST
+// -----------------------------------------------------
+
+async function approveQualificationRequest({
+  requestId,
+  adminId,
+  approvalRemarks = null,
+}) {
+  return knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: requestId,
+        section: "QUALIFICATION",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createQualificationError(
+        "QUALIFICATION_REQUEST_NOT_FOUND",
+        "Qualification request not found."
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createQualificationError(
+        "QUALIFICATION_REQUEST_NOT_PENDING",
+        "This qualification request has already been reviewed."
+      );
+    }
+
+    await trx("users")
+      .where({ id: request.user_id })
+      .forUpdate()
+      .first();
+
+    const requestType = request.request_type;
+
+    let qualification;
+    let updatedFields = [];
+
+    if (requestType === "CREATE") {
+      const requestedData =
+        typeof request.requested_data === "string"
+          ? JSON.parse(request.requested_data)
+          : request.requested_data;
+
+      const validatedData = validateQualificationData(
+        requestedData,
+        { isCreate: true }
+      );
+
+      for (const field of QUALIFICATION_FIELDS) {
+        if (validatedData[field] === undefined) {
+          validatedData[field] = null;
+        }
+      }
+
+      const [created] = await trx("employee_qualifications")
+        .insert({
+          user_id: request.user_id,
+          ...validatedData,
+          status: "ACTIVE",
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        })
+        .returning("*");
+
+      qualification = created;
+    } else {
+      const existing = await trx("employee_qualifications")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+          status: "ACTIVE",
+        })
+        .forUpdate()
+        .first();
+
+      if (!existing) {
+        throw createQualificationError(
+          "QUALIFICATION_NOT_FOUND",
+          "The original qualification record no longer exists."
+        );
+      }
+
+      if (requestType === "UPDATE") {
+        const requestedData =
+          typeof request.requested_data === "string"
+            ? JSON.parse(request.requested_data)
+            : request.requested_data;
+
+        const validatedData = validateQualificationData(
+          requestedData,
+          { isCreate: true }
+        );
+
+        for (const field of QUALIFICATION_FIELDS) {
+          if (validatedData[field] === undefined) {
+            validatedData[field] = null;
+          }
+        }
+
+        updatedFields = QUALIFICATION_FIELDS.filter(
+          (field) =>
+            String(existing[field] ?? "") !==
+            String(validatedData[field] ?? "")
+        );
+
+        const [updated] = await trx("employee_qualifications")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .update({
+            ...validatedData,
+            updated_at: trx.fn.now(),
+          })
+          .returning("*");
+
+        qualification = updated;
+      } else if (requestType === "DELETE") {
+        const [updated] = await trx("employee_qualifications")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .update({
+            status: "INACTIVE",
+            updated_at: trx.fn.now(),
+          })
+          .returning("*");
+
+        qualification = updated;
+      } else {
+        throw createQualificationError(
+          "INVALID_REQUEST_TYPE",
+          "Unsupported qualification request type."
+        );
+      }
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: requestId })
+      .update({
+        status: "APPROVED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: approvalRemarks,
+        updated_at: trx.fn.now(),
+      })
+      .returning("*");
+
+    return {
+      request: updatedRequest,
+      qualification,
+      updated_fields: updatedFields,
+      message: "Qualification request approved successfully.",
+    };
+  });
+}
+
+// -----------------------------------------------------
+// ADMIN: REJECT QUALIFICATION REQUEST
+// -----------------------------------------------------
+
+async function rejectQualificationRequest({
+  requestId,
+  adminId,
+  approvalRemarks,
+}) {
+  if (
+    typeof approvalRemarks !== "string" ||
+    !approvalRemarks.trim()
+  ) {
+    throw createQualificationError(
+      "APPROVAL_REMARKS_REQUIRED",
+      "Please provide a rejection reason."
+    );
+  }
+
+  if (approvalRemarks.trim().length > 1000) {
+    throw createQualificationError(
+      "INVALID_APPROVAL_REMARKS",
+      "Approval remarks cannot exceed 1000 characters."
+    );
+  }
+
+  return knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: requestId,
+        section: "QUALIFICATION",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createQualificationError(
+        "QUALIFICATION_REQUEST_NOT_FOUND",
+        "Qualification request not found."
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createQualificationError(
+        "QUALIFICATION_REQUEST_NOT_PENDING",
+        "This qualification request has already been reviewed."
+      );
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: requestId })
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: approvalRemarks.trim(),
+        updated_at: trx.fn.now(),
+      })
+      .returning("*");
+
+    return {
+      request: updatedRequest,
+      message: "Qualification request rejected successfully.",
+    };
+  });
+}
+
+
+
+// =====================================================
+// WORK EXPERIENCE - PREVIOUS EMPLOYMENT
+// =====================================================
+
+const WORK_EXPERIENCE_FIELDS = [
+  "previous_org_name",
+  "designation",
+  "from_date",
+  "to_date",
+  "remarks",
+];
+
+const WORK_EXPERIENCE_SECTION = "WORK_EXPERIENCE";
+
+function createWorkExperienceError(message, code = "VALIDATION_ERROR") {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+// Validate YYYY-MM-DD strictly
+function isValidWorkExperienceDate(value) {
+  if (typeof value !== "string") return false;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const date = new Date(`${value}T00:00:00.000Z`);
+
+  return (
+    !Number.isNaN(date.getTime()) &&
+    date.toISOString().slice(0, 10) === value
+  );
+}
+
+// Validate submitted work experience data
+function validateWorkExperienceData(data, requestType) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw createWorkExperienceError("Invalid work experience data");
+  }
+
+  const allowedFields = WORK_EXPERIENCE_FIELDS;
+
+  const unknownFields = Object.keys(data).filter(
+    (field) => !allowedFields.includes(field)
+  );
+
+  if (unknownFields.length > 0) {
+    throw createWorkExperienceError(
+      `Invalid fields: ${unknownFields.join(", ")}`
+    );
+  }
+
+  if (requestType === "CREATE") {
+    if (
+      !data.previous_org_name ||
+      typeof data.previous_org_name !== "string" ||
+      !data.previous_org_name.trim()
+    ) {
+      throw createWorkExperienceError(
+        "Previous organization name is required"
+      );
+    }
+
+    if (
+      !data.designation ||
+      typeof data.designation !== "string" ||
+      !data.designation.trim()
+    ) {
+      throw createWorkExperienceError("Designation is required");
+    }
+
+    if (!data.from_date) {
+      throw createWorkExperienceError("From date is required");
+    }
+  }
+
+  if (
+    data.previous_org_name !== undefined &&
+    data.previous_org_name !== null &&
+    (typeof data.previous_org_name !== "string" ||
+      !data.previous_org_name.trim() ||
+      data.previous_org_name.trim().length > 255)
+  ) {
+    throw createWorkExperienceError(
+      "Previous organization name must be between 1 and 255 characters"
+    );
+  }
+
+  if (
+    data.designation !== undefined &&
+    data.designation !== null &&
+    (typeof data.designation !== "string" ||
+      !data.designation.trim() ||
+      data.designation.trim().length > 150)
+  ) {
+    throw createWorkExperienceError(
+      "Designation must be between 1 and 150 characters"
+    );
+  }
+
+  for (const field of ["from_date", "to_date"]) {
+    if (
+      data[field] !== undefined &&
+      data[field] !== null &&
+      data[field] !== ""
+    ) {
+      if (!isValidWorkExperienceDate(data[field])) {
+        throw createWorkExperienceError(
+          `${field} must be a valid date in YYYY-MM-DD format`
+        );
+      }
+    }
+  }
+
+  if (
+    data.from_date &&
+    data.to_date &&
+    data.from_date > data.to_date
+  ) {
+    throw createWorkExperienceError(
+      "From date cannot be later than to date"
+    );
+  }
+
+  if (
+    data.remarks !== undefined &&
+    data.remarks !== null &&
+    (typeof data.remarks !== "string" ||
+      data.remarks.length > 2000)
+  ) {
+    throw createWorkExperienceError(
+      "Remarks cannot exceed 2000 characters"
+    );
+  }
+
+  const cleaned = {};
+
+  for (const field of allowedFields) {
+    if (Object.prototype.hasOwnProperty.call(data, field)) {
+      let value = data[field];
+
+      if (typeof value === "string") {
+        value = value.trim();
+      }
+
+      if (value === "") value = null;
+
+      cleaned[field] = value;
+    }
+  }
+
+  return cleaned;
+}
+
+// -----------------------------------------------------
+// EMPLOYEE - SUBMIT WORK EXPERIENCE REQUEST
+// -----------------------------------------------------
+
+async function submitWorkExperienceRequest({
+  userId,
+  experienceData,
+}) {
+  const requestType = experienceData?.request_type;
+
+  if (!["CREATE", "UPDATE", "DELETE"].includes(requestType)) {
+    throw createWorkExperienceError(
+      "request_type must be CREATE, UPDATE or DELETE"
+    );
+  }
+
+  const trx = await knex.transaction();
+
+  try {
+    const user = await trx("users")
+      .where({ id: userId })
+      .forUpdate()
+      .first();
+
+    if (!user) {
+      throw createWorkExperienceError(
+        "Employee not found",
+        "USER_NOT_FOUND"
+      );
+    }
+
+    let recordId = null;
+    let existingData = {};
+    let requestedData = {};
+
+    if (requestType === "CREATE") {
+      const submittedFields = { ...experienceData };
+      delete submittedFields.request_type;
+
+      requestedData = validateWorkExperienceData(
+        submittedFields,
+        "CREATE"
+      );
+
+      // CREATE requests must store {} because existing_data is NOT NULL.
+      existingData = {};
+    } else {
+      recordId = experienceData.id;
+
+      if (
+        recordId === undefined ||
+        recordId === null ||
+        !/^\d+$/.test(String(recordId))
+      ) {
+        throw createWorkExperienceError(
+          "A valid work experience id is required"
+        );
+      }
+
+      const existingRecord = await trx("employee_work_experiences")
+        .where({
+          id: recordId,
+          user_id: userId,
+          status: "ACTIVE",
+        })
+        .first();
+
+      if (!existingRecord) {
+        throw createWorkExperienceError(
+          "Work experience record not found",
+          "WORK_EXPERIENCE_NOT_FOUND"
+        );
+      }
+
+      existingData = existingRecord;
+
+      if (requestType === "UPDATE") {
+        const submittedFields = { ...experienceData };
+        delete submittedFields.request_type;
+        delete submittedFields.id;
+
+        if (Object.keys(submittedFields).length === 0) {
+          throw createWorkExperienceError(
+            "Provide at least one field to update"
+          );
+        }
+
+        const changes = validateWorkExperienceData(
+          submittedFields,
+          "UPDATE"
+        );
+
+        requestedData = {
+          previous_org_name: existingRecord.previous_org_name,
+          designation: existingRecord.designation,
+          from_date: existingRecord.from_date,
+          to_date: existingRecord.to_date,
+          remarks: existingRecord.remarks,
+          ...changes,
+        };
+
+        // Validate the complete merged record.
+        validateWorkExperienceData(requestedData, "CREATE");
+      } else {
+        const extraFields = Object.keys(experienceData).filter(
+          (field) => !["request_type", "id"].includes(field)
+        );
+
+        if (extraFields.length > 0) {
+          throw createWorkExperienceError(
+            "DELETE request accepts only request_type and id"
+          );
+        }
+
+        requestedData = {};
+      }
+    }
+
+    // Prevent duplicate pending requests for the same record.
+    const pendingQuery = trx("employee_profile_change_requests")
+      .where({
+        user_id: userId,
+        section: WORK_EXPERIENCE_SECTION,
+        status: "PENDING",
+      });
+
+    if (requestType === "CREATE") {
+      pendingQuery.whereNull("record_id");
+    } else {
+      pendingQuery.where("record_id", recordId);
+    }
+
+    const pendingRequest = await pendingQuery.first();
+
+    if (pendingRequest) {
+      throw createWorkExperienceError(
+        "A pending request already exists for this work experience record",
+        "PENDING_REQUEST_EXISTS"
+      );
+    }
+
+    const [request] = await trx("employee_profile_change_requests")
+      .insert({
+        user_id: userId,
+        section: WORK_EXPERIENCE_SECTION,
+        record_id: recordId,
+        request_type: requestType,
+        existing_data: JSON.stringify(existingData),
+        requested_data: JSON.stringify(requestedData),
+        status: "PENDING",
+        created_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
+      })
+      .returning("*");
+
+    await trx.commit();
+
+    return request;
+  } catch (error) {
+    await trx.rollback();
+    throw error;
+  }
+}
+
+// -----------------------------------------------------
+// EMPLOYEE - GET MY WORK EXPERIENCES
+// -----------------------------------------------------
+
+async function getMyWorkExperiences({ userId }) {
+  const [experiences, pendingRequests] = await Promise.all([
+    knex("employee_work_experiences")
+      .where({
+        user_id: userId,
+        status: "ACTIVE",
+      })
+      .select(
+        "id",
+        "previous_org_name",
+        "designation",
+        "from_date",
+        "to_date",
+        "remarks",
+        "created_at",
+        "updated_at"
+      )
+      .orderBy("from_date", "desc"),
+
+    knex("employee_profile_change_requests")
+      .where({
+        user_id: userId,
+        section: WORK_EXPERIENCE_SECTION,
+        status: "PENDING",
+      })
+      .select(
+        "id",
+        "record_id",
+        "request_type",
+        "existing_data",
+        "requested_data",
+        "status",
+        "created_at"
+      )
+      .orderBy("created_at", "desc"),
+  ]);
+
+  return {
+    experiences,
+    pending_requests: pendingRequests,
+  };
+}
+
+// -----------------------------------------------------
+// ADMIN - APPROVE WORK EXPERIENCE REQUEST
+// -----------------------------------------------------
+
+async function approveWorkExperienceRequest({
+  requestId,
+  adminId,
+  approvalRemarks = null,
+}) {
+  const trx = await knex.transaction();
+
+  try {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: requestId,
+        section: WORK_EXPERIENCE_SECTION,
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createWorkExperienceError(
+        "Work experience request not found",
+        "REQUEST_NOT_FOUND"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createWorkExperienceError(
+        "This request has already been reviewed",
+        "REQUEST_ALREADY_REVIEWED"
+      );
+    }
+
+    const requestedData =
+      typeof request.requested_data === "string"
+        ? JSON.parse(request.requested_data)
+        : request.requested_data;
+
+    let recordId = request.record_id;
+
+    if (request.request_type === "CREATE") {
+      const validatedData = validateWorkExperienceData(
+        requestedData,
+        "CREATE"
+      );
+
+      const [created] = await trx("employee_work_experiences")
+        .insert({
+          user_id: request.user_id,
+          ...validatedData,
+          status: "ACTIVE",
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        })
+        .returning("id");
+
+      recordId = created.id;
+    } else {
+      const existingRecord = await trx("employee_work_experiences")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .forUpdate()
+        .first();
+
+      if (!existingRecord || existingRecord.status !== "ACTIVE") {
+        throw createWorkExperienceError(
+          "Work experience record is no longer active",
+          "WORK_EXPERIENCE_NOT_FOUND"
+        );
+      }
+
+      if (request.request_type === "UPDATE") {
+        const validatedData = validateWorkExperienceData(
+          requestedData,
+          "CREATE"
+        );
+
+        await trx("employee_work_experiences")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .update({
+            ...validatedData,
+            updated_at: trx.fn.now(),
+          });
+      } else if (request.request_type === "DELETE") {
+        await trx("employee_work_experiences")
+          .where({
+            id: request.record_id,
+            user_id: request.user_id,
+          })
+          .update({
+            status: "INACTIVE",
+            updated_at: trx.fn.now(),
+          });
+      } else {
+        throw createWorkExperienceError(
+          "Invalid request type"
+        );
+      }
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: requestId })
+      .update({
+        status: "APPROVED",
+        record_id: recordId,
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: approvalRemarks,
+        updated_at: trx.fn.now(),
+      })
+      .returning("*");
+
+    await trx.commit();
+
+    return updatedRequest;
+  } catch (error) {
+    await trx.rollback();
+    throw error;
+  }
+}
+
+// -----------------------------------------------------
+// ADMIN - REJECT WORK EXPERIENCE REQUEST
+// -----------------------------------------------------
+
+async function rejectWorkExperienceRequest({
+  requestId,
+  adminId,
+  approvalRemarks,
+}) {
+  if (
+    !approvalRemarks ||
+    typeof approvalRemarks !== "string" ||
+    !approvalRemarks.trim()
+  ) {
+    throw createWorkExperienceError(
+      "Rejection remarks are required"
+    );
+  }
+
+  const [updatedRequest] = await knex(
+    "employee_profile_change_requests"
+  )
+    .where({
+      id: requestId,
+      section: WORK_EXPERIENCE_SECTION,
+      status: "PENDING",
+    })
+    .update({
+      status: "REJECTED",
+      reviewed_by: adminId,
+      reviewed_at: knex.fn.now(),
+      approval_remarks: approvalRemarks.trim(),
+      updated_at: knex.fn.now(),
+    })
+    .returning("*");
+
+  if (!updatedRequest) {
+    throw createWorkExperienceError(
+      "Pending work experience request not found",
+      "REQUEST_NOT_FOUND"
+    );
+  }
+
+  return updatedRequest;
+}
+
+
+// =====================================================
+// DESIGNATION MANAGEMENT
+// =====================================================
+
+const DESIGNATION_MAX_LENGTH = 150;
+
+function createDesignationError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+function validateDesignationUpdate({
+  designation,
+  effective_date,
+}) {
+  if (
+    typeof designation !== "string" ||
+    !designation.trim()
+  ) {
+    throw createDesignationError(
+      "Designation is required"
+    );
+  }
+
+  if (designation.trim().length > DESIGNATION_MAX_LENGTH) {
+    throw createDesignationError(
+      "Designation cannot exceed 150 characters"
+    );
+  }
+
+  if (
+    typeof effective_date !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(effective_date)
+  ) {
+    throw createDesignationError(
+      "Effective date must be in YYYY-MM-DD format"
+    );
+  }
+
+  const [year, month, day] = effective_date
+    .split("-")
+    .map(Number);
+
+  const parsedDate = new Date(
+    Date.UTC(year, month - 1, day)
+  );
+
+  if (
+    parsedDate.getUTCFullYear() !== year ||
+    parsedDate.getUTCMonth() !== month - 1 ||
+    parsedDate.getUTCDate() !== day
+  ) {
+    throw createDesignationError(
+      "Invalid effective date"
+    );
+  }
+
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  if (effective_date > today) {
+    throw createDesignationError(
+      "Future effective dates are not allowed"
+    );
+  }
+
+  return {
+    designation: designation.trim(),
+    effective_date,
+  };
+}
+
+// =====================================================
+// ADMIN - UPDATE EMPLOYEE DESIGNATION
+// =====================================================
+
+async function updateEmployeeDesignation({
+  userId,
+  adminId,
+  designation,
+  effective_date,
+  remarks,
+}) {
+  const validated = validateDesignationUpdate({
+    designation,
+    effective_date,
+  });
+
+  if (
+    remarks !== undefined &&
+    remarks !== null &&
+    typeof remarks !== "string"
+  ) {
+    throw createDesignationError(
+      "Remarks must be a string"
+    );
+  }
+
+  if (remarks && remarks.trim().length > 2000) {
+    throw createDesignationError(
+      "Remarks cannot exceed 2000 characters"
+    );
+  }
+
+  return knex.transaction(async (trx) => {
+    const employee = await trx("users")
+      .where({ id: userId })
+      .forUpdate()
+      .first();
+
+    if (!employee) {
+      const error = new Error("Employee not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (employee.role !== "EMPLOYEE") {
+      throw createDesignationError(
+        "Designation can only be updated for employees"
+      );
+    }
+
+    const oldDesignation = employee.designation || null;
+    const newDesignation = validated.designation;
+
+    if (oldDesignation === newDesignation) {
+      throw createDesignationError(
+        "New designation is the same as the current designation"
+      );
+    }
+
+    // Prevent duplicate designation history entries
+    // for the same employee and effective date.
+    const existingHistory = await trx(
+      "employee_designation_history"
+    )
+      .where({
+        user_id: userId,
+        effective_date: validated.effective_date,
+      })
+      .first();
+
+    if (existingHistory) {
+      throw createDesignationError(
+        "A designation change already exists for this effective date"
+      );
+    }
+
+    // Update current designation.
+    await trx("users")
+      .where({ id: userId })
+      .update({
+        designation: newDesignation,
+      });
+
+    // Save designation history.
+    const [history] = await trx(
+      "employee_designation_history"
+    )
+      .insert({
+        user_id: userId,
+        old_designation: oldDesignation,
+        new_designation: newDesignation,
+        effective_date: validated.effective_date,
+        changed_by: adminId,
+        remarks: remarks ? remarks.trim() : null,
+      })
+      .returning("*");
+
+    return {
+      employee_id: userId,
+      old_designation: oldDesignation,
+      new_designation: newDesignation,
+      effective_date: validated.effective_date,
+      history,
+    };
+  });
+}
+
+// =====================================================
+// ADMIN - GET DESIGNATION HISTORY
+// =====================================================
+
+async function getEmployeeDesignationHistory({
+  userId,
+}) {
+  const employee = await knex("users")
+    .select("id", "emp_code", "name", "designation")
+    .where({ id: userId })
+    .first();
+
+  if (!employee) {
+    const error = new Error("Employee not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const history = await knex(
+    "employee_designation_history"
+  )
+    .select(
+      "id",
+      "old_designation",
+      "new_designation",
+      knex.raw("effective_date::text as effective_date"),
+      "changed_by",
+      "remarks",
+      "created_at"
+    )
+    .where({ user_id: userId })
+    .orderBy("effective_date", "desc")
+    .orderBy("id", "desc");
+
+  return {
+    employee,
+    designation_history: history,
+  };
+}
 
 
 
@@ -3501,8 +5050,20 @@ module.exports = {
   rejectFamilyMemberRequest,
   approveFamilyMemberRequest,
   getMyFamilyMembers,
-  submitFamilyMemberRequest
+  submitFamilyMemberRequest,
+  
+  submitQualificationRequest,
+  getMyQualifications,
+  approveQualificationRequest,
+  rejectQualificationRequest,
 
+  submitWorkExperienceRequest,
+  getMyWorkExperiences,
+  approveWorkExperienceRequest,
+  rejectWorkExperienceRequest,
+
+  updateEmployeeDesignation,
+  getEmployeeDesignationHistory,
 
 
 };

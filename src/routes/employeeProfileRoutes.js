@@ -185,4 +185,75 @@ router.patch(
 );
 
 
+ // =====================================================
+// QUALIFICATION ROUTES
+// =====================================================
+
+// EMPLOYEE
+router.get(
+  "/me/qualifications",
+  userAuthorize(),
+  employeeProfileController.getMyQualifications
+);
+
+router.post(
+  "/me/qualifications/request",
+  userAuthorize(),
+  employeeProfileController.submitQualificationRequest
+);
+
+// ADMIN
+router.patch(
+  "/admin/requests/:id/qualification/approve",
+  adminAuthorize(),
+  employeeProfileController.approveQualificationRequest
+);
+
+router.patch(
+  "/admin/requests/:id/qualification/reject",
+  adminAuthorize(),
+  employeeProfileController.rejectQualificationRequest
+);
+
+
+// EMPLOYEE - WORK EXPERIENCE
+router.get(
+  "/me/work-experiences",
+  userAuthorize(),
+  employeeProfileController.getMyWorkExperiences
+);
+
+router.post(
+  "/me/work-experiences/request",
+  userAuthorize(),
+  employeeProfileController.submitWorkExperienceRequest
+);
+
+// ADMIN - WORK EXPERIENCE APPROVAL
+router.patch(
+  "/admin/requests/:id/work-experience/approve",
+  adminAuthorize(),
+  employeeProfileController.approveWorkExperienceRequest
+);
+
+router.patch(
+  "/admin/requests/:id/work-experience/reject",
+  adminAuthorize(),
+  employeeProfileController.rejectWorkExperienceRequest
+);
+
+
+// DESIGNATION HISTORY ROUTES
+router.patch(
+  "/admin/:userId/designation",
+  adminAuthorize(),
+  employeeProfileController.updateEmployeeDesignation
+);
+
+router.get(
+  "/admin/:userId/designation-history",
+  adminAuthorize(),
+  employeeProfileController.getEmployeeDesignationHistory
+);
+
 module.exports = router;
