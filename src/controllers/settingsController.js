@@ -1,4 +1,5 @@
 const settingsService = require("../services/settingsService");
+const workdaySwapService = require("../services/WorkdaySwapService");
 
 // GET SETTINGS
 
@@ -109,6 +110,9 @@ async function createHoliday(req, res) {
     if (error.code === "HOLIDAY_ALREADY_EXISTS") {
       statusCode = 404;
     }
+    if (error.code === "HOLIDAY_WORKDAY_SWAP_CONFLICT") {
+      statusCode = 400;
+    }
     return res
       .status(statusCode)
       .json({
@@ -146,10 +150,86 @@ async function deleteHoliday(req, res) {
   }
 }
 
+async function getWorkdaySwaps(req, res) {
+  try {
+    const result = await workdaySwapService.getWorkdaySwaps({
+      year: req.query.year,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Get workday swaps error:", error);
+    return res.status(400).json({
+      success: false,
+      code: error.code || "GET_WORKDAY_SWAPS_FAILED",
+      message: error.message,
+    });
+  }
+}
+
+async function createWorkdaySwap(req, res) {
+  try {
+   const result = await workdaySwapService.createWorkdaySwap({
+  adminId: req.user.id,
+  holiday_date: req.body.holiday_date,
+  replacement_date: req.body.replacement_date,
+  user_ids: req.body.user_ids,
+  reason: req.body.reason,
+});
+    return res.status(201).json(result);
+  } catch (error) {
+    console.error("Create workday swap error:", error);
+    const conflictErrors = [
+      "MONTH_LOCKED",
+      "WORKDAY_SWAP_CONFLICT",
+      "HOLIDAY_DATE_CONFLICT",
+    ];
+    const statusCode = error.code === "ADMIN_NOT_FOUND"
+      ? 403
+      : conflictErrors.includes(error.code)
+        ? 400
+        : 400;
+
+    return res.status(statusCode).json({
+      success: false,
+      code: error.code || "CREATE_WORKDAY_SWAP_FAILED",
+      message: error.message,
+    });
+  }
+}
+
+async function deleteWorkdaySwap(req, res) {
+  try {
+    const result = await workdaySwapService.deleteWorkdaySwap({
+      adminId: req.user.id,
+      swapId: req.params.id,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Delete workday swap error:", error);
+    const statusCode = error.code === "WORKDAY_SWAP_NOT_FOUND"
+      ? 404
+      : error.code === "ADMIN_NOT_FOUND"
+        ? 403
+        : error.code === "MONTH_LOCKED" ||
+            error.code === "WORKDAY_SWAP_CONFLICT"
+          ? 400
+          : 400;
+
+    return res.status(statusCode).json({
+      success: false,
+      code: error.code || "DELETE_WORKDAY_SWAP_FAILED",
+      message: error.message,
+    });
+  }
+}
+
 module.exports = {
   getSettings,
   updateSettings,
   deleteHoliday,
   createHoliday,
   getHolidays,
+  getWorkdaySwaps,
+  createWorkdaySwap,
+  deleteWorkdaySwap,
 };

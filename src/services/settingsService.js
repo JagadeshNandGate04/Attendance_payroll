@@ -1,6 +1,6 @@
 const knex = require("../config/database");
 const validatorSettings = require("../utils/validators");
-const { recomputeDay } = require("../services/attendanceService");
+const { recomputeDay } = require("./AttendanceService");
 
 // VALIDATE SETTING VALUE
 
@@ -440,7 +440,10 @@ async function getHolidays({ year }) {
   };
 }
 
+
+// =====================================================
 // CREATE HOLIDAY
+// =====================================================
 
 async function createHoliday({ adminId, holiday_date, name }) {
   // --------------------------------------------
@@ -448,9 +451,7 @@ async function createHoliday({ adminId, holiday_date, name }) {
   // --------------------------------------------
 
   const holidayDate = validateDateOnly(holiday_date);
-
   const holidayName = validateHolidayName(name);
-
   const holidayYear = Number(holidayDate.substring(0, 4));
 
   // --------------------------------------------
@@ -471,6 +472,24 @@ async function createHoliday({ adminId, holiday_date, name }) {
     await checkMonthLocked(trx, holidayDate);
 
     // ----------------------------------------
+    // CHECK WORKDAY SWAP CONFLICT
+    // ----------------------------------------
+
+    const replacementSwap = await trx("workday_swap_groups")
+      .select("id")
+      .where("replacement_date", holidayDate)
+      .first();
+
+    if (replacementSwap) {
+      const error = new Error(
+        "A public holiday cannot be added on a workday swap replacement date"
+      );
+
+      error.code = "HOLIDAY_WORKDAY_SWAP_CONFLICT";
+      throw error;
+    }
+
+    // ----------------------------------------
     // CHECK DUPLICATE HOLIDAY
     // ----------------------------------------
 
@@ -480,10 +499,11 @@ async function createHoliday({ adminId, holiday_date, name }) {
       .first();
 
     if (existing) {
-      const error = new Error("Holiday already exists for this date");
+      const error = new Error(
+        "Holiday already exists for this date"
+      );
 
       error.code = "HOLIDAY_ALREADY_EXISTS";
-
       throw error;
     }
 
@@ -494,9 +514,7 @@ async function createHoliday({ adminId, holiday_date, name }) {
     const [holiday] = await trx("holidays")
       .insert({
         holiday_date: holidayDate,
-
         name: holidayName,
-
         year: holidayYear,
       })
       .returning([
@@ -515,23 +533,15 @@ async function createHoliday({ adminId, holiday_date, name }) {
     const employees = await getActiveEmployees(trx);
 
     // ----------------------------------------
-    // REWRITE DAY SUMMARIES
-    // ----------------------------------------
-    //
-    // Every active employee gets this date
-    // marked as HOLIDAY.
-    //
-    // Admin users are NOT included.
+    // RECALCULATE ATTENDANCE FOR EACH EMPLOYEE
     // ----------------------------------------
 
     for (const employee of employees) {
-      await rewriteHolidayDaySummary({
-        trx,
-
-        userId: employee.id,
-
-        workDate: holidayDate,
-      });
+      await recomputeDay(
+        employee.id,
+        holidayDate,
+        trx
+      );
     }
 
     // ----------------------------------------
@@ -541,25 +551,16 @@ async function createHoliday({ adminId, holiday_date, name }) {
     const [audit] = await trx("audit_log")
       .insert({
         actor_id: adminId,
-
         action: "HOLIDAY_ADDED",
-
         entity_type: "holidays",
-
         entity_id: holiday.id,
-
         before: null,
-
         after: {
           id: holiday.id,
-
           holiday_date: holidayDate,
-
           name: holidayName,
-
           year: holidayYear,
         },
-
         reason: `Holiday added: ${holidayName}`,
       })
       .returning(["id"]);
@@ -568,18 +569,18 @@ async function createHoliday({ adminId, holiday_date, name }) {
     // RESPONSE
     // ----------------------------------------
 
- return {
-  success: true,
-  message: "Holiday added successfully",
-  data: {
-    holiday: {
-      ...holiday,
-      holiday_date: holidayDate,
-    },
-    affected_users: employees.length,
-    audit_id: audit.id,
-  },
-};
+    return {
+      success: true,
+      message: "Holiday added successfully",
+      data: {
+        holiday: {
+          ...holiday,
+          holiday_date: holidayDate,
+        },
+        affected_users: employees.length,
+        audit_id: audit.id,
+      },
+    };
   });
 }
 

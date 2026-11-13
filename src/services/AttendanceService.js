@@ -305,6 +305,27 @@ async function isWeeklyOff(date, trx = knex) {
   return days.includes(day);
 }
 
+
+
+async function getWorkdaySwapForDate(userId, date, trx = knex) {
+  return trx("workday_swap_employees")
+    .join(
+      "workday_swap_groups",
+      "workday_swap_groups.id",
+      "workday_swap_employees.group_id"
+    )
+    .where("workday_swap_employees.user_id", userId)
+    .andWhere(function () {
+      this.where("workday_swap_groups.holiday_date", date)
+        .orWhere("workday_swap_groups.replacement_date", date);
+    })
+    .first(
+      trx.raw("workday_swap_groups.holiday_date::text AS holiday_date"),
+      trx.raw("workday_swap_groups.replacement_date::text AS replacement_date")
+    );
+}
+
+
 // =====================================================
 // HELPER - GET APPROVED LEAVE
 // =====================================================
@@ -423,6 +444,7 @@ async function getPunchesForDate(
   );
 }
 
+
 // =====================================================
 // HELPER - CALCULATE DAY SUMMARY
 // =====================================================
@@ -436,6 +458,12 @@ async function calculateDaySummary({
   const holiday = await getHoliday(date, trx);
 
   const weeklyOff = await isWeeklyOff(date, trx);
+
+  const workdaySwap = await getWorkdaySwapForDate(
+    user.id,
+    date,
+    trx
+  );
 
   const leave = await getApprovedLeaveForDate(
     user.id,
@@ -455,7 +483,19 @@ async function calculateDaySummary({
     0
   );
 
-  if (holiday) {
+ const isHolidayDate =
+  Boolean(workdaySwap) &&
+  workdaySwap.holiday_date === date;
+
+const isReplacementDate =
+  Boolean(workdaySwap) &&
+  workdaySwap.replacement_date === date;
+
+  // -----------------------------------------------------
+  // HOLIDAY
+  // -----------------------------------------------------
+
+  if (isHolidayDate || (holiday && !isReplacementDate)) {
     return {
       status: STATUS.HOLIDAY,
       first_in: null,
@@ -470,7 +510,12 @@ async function calculateDaySummary({
     };
   }
 
-  if (weeklyOff) {
+  // -----------------------------------------------------
+  // WEEKLY OFF
+  // -----------------------------------------------------
+
+  // A replacement working date overrides the normal weekly off.
+  if (weeklyOff && !isReplacementDate) {
     return {
       status: STATUS.WEEKLY_OFF,
       first_in: null,
@@ -484,6 +529,10 @@ async function calculateDaySummary({
       lop_value: 0,
     };
   }
+
+  // -----------------------------------------------------
+  // APPROVED LEAVE
+  // -----------------------------------------------------
 
   if (leave) {
     return {
@@ -499,6 +548,10 @@ async function calculateDaySummary({
       lop_value: 0,
     };
   }
+
+  // -----------------------------------------------------
+  // COMPLETED ATTENDANCE SESSIONS
+  // -----------------------------------------------------
 
   const completedSessions = sessions.filter(
     (session) =>
@@ -539,6 +592,10 @@ async function calculateDaySummary({
       session.flag === "MISSING_OUT"
   );
 
+  // -----------------------------------------------------
+  // ATTENDANCE SETTINGS
+  // -----------------------------------------------------
+
   const shift = await getSetting("shift", trx);
 
   const graceMin = await getNumberSetting(
@@ -569,6 +626,10 @@ async function calculateDaySummary({
 
   const halfDayMin = halfDayHours * 60;
 
+  // -----------------------------------------------------
+  // LATE ARRIVAL
+  // -----------------------------------------------------
+
   let isLate = false;
 
   if (firstIn && shift && shift.start) {
@@ -585,8 +646,16 @@ async function calculateDaySummary({
     isLate = lateMinutes > graceMin;
   }
 
+  // -----------------------------------------------------
+  // BREAK VALIDATION
+  // -----------------------------------------------------
+
   const excessBreak =
     breakMin > breakAllowanceMin;
+
+  // -----------------------------------------------------
+  // FINAL ATTENDANCE STATUS
+  // -----------------------------------------------------
 
   let status = STATUS.ABSENT;
 
@@ -605,6 +674,10 @@ async function calculateDaySummary({
     status = STATUS.ABSENT;
     lopValue = 2;
   }
+
+  // -----------------------------------------------------
+  // RETURN DAY SUMMARY
+  // -----------------------------------------------------
 
   return {
     status,

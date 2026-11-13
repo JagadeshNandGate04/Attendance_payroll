@@ -28,5 +28,23 @@ router.delete(
   settingsController.deleteHoliday
 );
 
+router.get(
+  "/getWorkdaySwaps",
+  adminAuthorize(),
+  settingsController.getWorkdaySwaps
+);
+
+router.post(
+  "/createWorkdaySwap",
+  adminAuthorize(),
+  settingsController.createWorkdaySwap
+);
+
+router.delete(
+  "/deleteWorkdaySwap/:id",
+  adminAuthorize(),
+  settingsController.deleteWorkdaySwap
+);
+
 
 module.exports = router;

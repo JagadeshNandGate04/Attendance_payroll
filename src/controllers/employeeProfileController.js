@@ -323,7 +323,7 @@ async function approvePersonalDetailsRequest(req, res) {
     }
 
     if (error.code === "PROFILE_REQUEST_NOT_PENDING") {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -336,7 +336,7 @@ async function approvePersonalDetailsRequest(req, res) {
       error.code === "INVALID_PERSONAL_FIELD" ||
       error.code === "INVALID_PERSONAL_FIELD_VALUE"
     ) {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
         error: error.code,
         message: "Stored request data is invalid and cannot be approved",
@@ -389,7 +389,7 @@ async function rejectPersonalDetailsRequest(req, res) {
     }
 
     if (error.code === "PROFILE_REQUEST_NOT_PENDING") {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -535,7 +535,7 @@ async function approveAddressRequest(req, res) {
       error.code === "PROFILE_REQUEST_NOT_PENDING" ||
       error.code === "ADDRESS_ALREADY_EXISTS"
     ) {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -588,7 +588,7 @@ async function rejectAddressRequest(req, res) {
     }
 
     if (error.code === "PROFILE_REQUEST_NOT_PENDING") {
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
         error: error.code,
         message: error.message,
@@ -735,7 +735,7 @@ async function approveEmergencyContactRequest(req, res) {
       error.code === "PROFILE_CHANGE_REQUEST_NOT_PENDING" ||
       error.code === "EMERGENCY_CONTACT_NOT_ACTIVE"
     ) {
-      statusCode = 409;
+      statusCode = 400;
     }
 
     return res.status(statusCode).json({
@@ -781,7 +781,7 @@ async function rejectEmergencyContactRequest(req, res) {
     } else if (
       error.code === "PROFILE_CHANGE_REQUEST_NOT_PENDING"
     ) {
-      statusCode = 409;
+      statusCode = 400;
     }
 
     return res.status(statusCode).json({
@@ -924,7 +924,7 @@ async function approveFamilyMemberRequest(req, res) {
       error.code === "PROFILE_CHANGE_REQUEST_NOT_PENDING" ||
       error.code === "FAMILY_MEMBER_NOT_ACTIVE"
     ) {
-      statusCode = 409;
+      statusCode = 400;
     }
 
     return res.status(statusCode).json({
@@ -970,7 +970,7 @@ async function rejectFamilyMemberRequest(req, res) {
     } else if (
       error.code === "PROFILE_CHANGE_REQUEST_NOT_PENDING"
     ) {
-      statusCode = 409;
+      statusCode = 400;
     }
 
     return res.status(statusCode).json({
