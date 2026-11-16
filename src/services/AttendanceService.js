@@ -12,6 +12,7 @@ const {
 } = require("../utils/attendanceUtils");
 
 const { formatDateOnly } = require("../utils/dateHelpers");
+const { applyHolidayEmployeeScope } = require("../utils/holidayUtils");
 
 // =====================================================
 // CONSTANTS
@@ -29,6 +30,90 @@ const STATUS = {
 
 const MAX_LOP_VALUE = 2;
 const LOP_STEP = 0.5;
+const IST_OFFSET_MINUTES = 330;
+
+function parsePunchDateTime(value) {
+  if (typeof value !== "string") {
+    return new Date(value);
+  }
+
+  const localDateTime = value.trim().match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/
+  );
+
+  if (!localDateTime) {
+    return new Date(value);
+  }
+
+  const [
+    ,
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second = "0",
+    millisecond = "0",
+  ] = localDateTime;
+  const parts = [year, month, day, hour, minute, second].map(Number);
+  const [
+    numericYear,
+    numericMonth,
+    numericDay,
+    numericHour,
+    numericMinute,
+    numericSecond,
+  ] = parts;
+  const numericMillisecond = Number(millisecond.padEnd(3, "0"));
+  const utcDate = new Date(
+    Date.UTC(
+      numericYear,
+      numericMonth - 1,
+      numericDay,
+      numericHour,
+      numericMinute,
+      numericSecond,
+      numericMillisecond
+    )
+  );
+
+  if (
+    utcDate.getUTCFullYear() !== numericYear ||
+    utcDate.getUTCMonth() !== numericMonth - 1 ||
+    utcDate.getUTCDate() !== numericDay ||
+    numericHour > 23 ||
+    numericMinute > 59 ||
+    numericSecond > 59
+  ) {
+    return new Date(NaN);
+  }
+
+  return new Date(utcDate.getTime() - IST_OFFSET_MINUTES * 60_000);
+}
+
+function formatPunchDateTime(value) {
+  if (!value) {
+    return value;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Date(
+    date.getTime() + IST_OFFSET_MINUTES * 60_000
+  ).toISOString().replace("Z", "+05:30");
+}
+
+function getPunchWorkDate(value) {
+  const utcDate = new Date(
+    new Date(value).getTime() + IST_OFFSET_MINUTES * 60_000
+  );
+
+  return utcDate.toISOString().slice(0, 10);
+}
 
 // =====================================================
 // HELPER - NORMALIZE DATE KEY
@@ -274,10 +359,14 @@ async function getEmployee(userId, trx = knex) {
 // HELPER - GET HOLIDAY
 // =====================================================
 
-async function getHoliday(date, trx = knex) {
-  return trx("holidays")
+async function getHoliday(date, userId, trx = knex) {
+  return applyHolidayEmployeeScope(
+    trx("holidays"),
+    userId,
+    trx
+  )
     .where({
-      holiday_date: date,
+      "holidays.holiday_date": date,
     })
     .first();
 }
@@ -455,7 +544,7 @@ async function calculateDaySummary({
   sessions,
   trx,
 }) {
-  const holiday = await getHoliday(date, trx);
+  const holiday = await getHoliday(date, user.id, trx);
 
   const weeklyOff = await isWeeklyOff(date, trx);
 
@@ -1572,6 +1661,8 @@ async function getAdminDailyAttendance({ date }) {
   nextDate.setUTCDate(nextDate.getUTCDate() + 1);
 
   const endExclusive = nextDate.toISOString().slice(0, 10);
+  const startTimestamp = `${validatedDate}T00:00:00+05:30`;
+  const endTimestamp = `${endExclusive}T00:00:00+05:30`;
 
   // ---------------------------------------------------
   // GET EMPLOYEES
@@ -1629,12 +1720,12 @@ async function getAdminDailyAttendance({ date }) {
     .where(
       "punched_at",
       ">=",
-      `${validatedDate} 00:00:00`
+      startTimestamp
     )
     .where(
       "punched_at",
       "<",
-      `${endExclusive} 00:00:00`
+      endTimestamp
     )
     .orderBy("punched_at", "asc");
 
@@ -1654,12 +1745,12 @@ async function getAdminDailyAttendance({ date }) {
     .where(
       "punched_at",
       ">=",
-      `${validatedDate} 00:00:00`
+      startTimestamp
     )
     .where(
       "punched_at",
       "<",
-      `${endExclusive} 00:00:00`
+      endTimestamp
     )
     .orderBy("punched_at", "asc");
 
@@ -1801,15 +1892,15 @@ async function getAdminDailyAttendance({ date }) {
       live_status: liveStatus,
 
       first_in: summary
-        ? summary.first_in
+        ? formatPunchDateTime(summary.first_in)
         : firstIn
-          ? firstIn.punched_at
+          ? formatPunchDateTime(firstIn.punched_at)
           : null,
 
       last_out: summary
-        ? summary.last_out
+        ? formatPunchDateTime(summary.last_out)
         : lastOut
-          ? lastOut.punched_at
+          ? formatPunchDateTime(lastOut.punched_at)
           : null,
 
       work_min: summary
@@ -2545,13 +2636,13 @@ async function addAttendanceCorrection({
 
   const employee = await getEmployee(validatedUserId);
 
-  const punchedDate = new Date(punchedAt);
+  const punchedDate = parsePunchDateTime(punchedAt);
 
   if (Number.isNaN(punchedDate.getTime())) {
     throw new Error("Invalid punched_at");
   }
 
-  const workDate = punchedDate.toISOString().slice(0, 10);
+  const workDate = getPunchWorkDate(punchedDate);
 
   return knex.transaction(async (trx) => {
     const summary = await trx("day_summaries")
@@ -2639,8 +2730,17 @@ async function addAttendanceCorrection({
       message: "Attendance correction added successfully",
 
       data: {
-        correction,
-        day_summary: updatedSummary,
+        correction: {
+          ...correction,
+          punched_at: formatPunchDateTime(correction.punched_at),
+        },
+        day_summary: updatedSummary
+          ? {
+              ...updatedSummary,
+              first_in: formatPunchDateTime(updatedSummary.first_in),
+              last_out: formatPunchDateTime(updatedSummary.last_out),
+            }
+          : updatedSummary,
       },
     };
   });
@@ -2704,15 +2804,13 @@ async function voidAttendanceCorrection({
       throw new Error("Correction already voided");
     }
 
-    const punchedDate = new Date(
-      correction.punched_at
-    );
+    const punchedDate = parsePunchDateTime(correction.punched_at);
 
     if (Number.isNaN(punchedDate.getTime())) {
       throw new Error("Invalid correction punched_at");
     }
 
-    const workDate = punchedDate.toISOString().slice(0, 10);
+    const workDate = getPunchWorkDate(punchedDate);
 
     const existingSummary = await trx("day_summaries")
       .where({
@@ -2816,8 +2914,17 @@ async function voidAttendanceCorrection({
       message: "Attendance correction voided successfully",
 
       data: {
-        correction: updatedCorrection,
-        day_summary: updatedSummary,
+        correction: {
+          ...updatedCorrection,
+          punched_at: formatPunchDateTime(updatedCorrection.punched_at),
+        },
+        day_summary: updatedSummary
+          ? {
+              ...updatedSummary,
+              first_in: formatPunchDateTime(updatedSummary.first_in),
+              last_out: formatPunchDateTime(updatedSummary.last_out),
+            }
+          : updatedSummary,
       },
     };
   });

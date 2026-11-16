@@ -424,11 +424,32 @@ async function getHolidays({ year }) {
       knex.raw("holiday_date::text as holiday_date"),
       "name",
       "year",
+      "is_all_employees",
       "created_at",
       "updated_at"
     )
     .where("year", numericYear)
     .orderBy("holiday_date", "asc");
+
+  const holidayIds = holidays.map((holiday) => holiday.id);
+  const employeeAssignments = holidayIds.length
+    ? await knex("holiday_employees")
+      .select("holiday_id", "user_id")
+      .whereIn("holiday_id", holidayIds)
+    : [];
+  const employeeIdsByHoliday = new Map();
+
+  for (const assignment of employeeAssignments) {
+    const holidayId = String(assignment.holiday_id);
+    const employeeIds = employeeIdsByHoliday.get(holidayId) || [];
+    employeeIds.push(assignment.user_id);
+    employeeIdsByHoliday.set(holidayId, employeeIds);
+  }
+
+  for (const holiday of holidays) {
+    holiday.user_ids =
+      employeeIdsByHoliday.get(String(holiday.id)) || [];
+  }
 
   return {
     success: true,
@@ -445,7 +466,13 @@ async function getHolidays({ year }) {
 // CREATE HOLIDAY
 // =====================================================
 
-async function createHoliday({ adminId, holiday_date, name }) {
+async function createHoliday({
+  adminId,
+  holiday_date,
+  name,
+  is_all_employees = true,
+  user_ids = [],
+}) {
   // --------------------------------------------
   // VALIDATE INPUT
   // --------------------------------------------
@@ -453,6 +480,46 @@ async function createHoliday({ adminId, holiday_date, name }) {
   const holidayDate = validateDateOnly(holiday_date);
   const holidayName = validateHolidayName(name);
   const holidayYear = Number(holidayDate.substring(0, 4));
+  if (typeof is_all_employees !== "boolean") {
+    const error = new Error("is_all_employees must be a boolean");
+    error.code = "INVALID_HOLIDAY_SCOPE";
+    throw error;
+  }
+
+  if (
+    !Array.isArray(user_ids) ||
+    user_ids.some(
+      (id) => !Number.isSafeInteger(Number(id)) || Number(id) <= 0
+    )
+  ) {
+    const error = new Error("user_ids must be an array of employee IDs");
+    error.code = "INVALID_HOLIDAY_SCOPE";
+    throw error;
+  }
+
+  const userIds = user_ids.map(Number);
+
+  if (new Set(userIds).size !== userIds.length) {
+    const error = new Error("user_ids cannot contain duplicates");
+    error.code = "INVALID_HOLIDAY_SCOPE";
+    throw error;
+  }
+
+  if (is_all_employees && userIds.length > 0) {
+    const error = new Error(
+      "user_ids must be empty when the holiday applies to all employees"
+    );
+    error.code = "INVALID_HOLIDAY_SCOPE";
+    throw error;
+  }
+
+  if (!is_all_employees && userIds.length === 0) {
+    const error = new Error(
+      "Select at least one employee for an employee-specific holiday"
+    );
+    error.code = "INVALID_HOLIDAY_SCOPE";
+    throw error;
+  }
 
   // --------------------------------------------
   // TRANSACTION
@@ -475,10 +542,20 @@ async function createHoliday({ adminId, holiday_date, name }) {
     // CHECK WORKDAY SWAP CONFLICT
     // ----------------------------------------
 
-    const replacementSwap = await trx("workday_swap_groups")
-      .select("id")
-      .where("replacement_date", holidayDate)
-      .first();
+    const replacementSwapQuery = trx("workday_swap_groups as swap_groups")
+      .join(
+        "workday_swap_employees as swap_employees",
+        "swap_employees.group_id",
+        "swap_groups.id"
+      )
+      .select("swap_groups.id")
+      .where("swap_groups.replacement_date", holidayDate);
+
+    if (!is_all_employees) {
+      replacementSwapQuery.whereIn("swap_employees.user_id", userIds);
+    }
+
+    const replacementSwap = await replacementSwapQuery.first();
 
     if (replacementSwap) {
       const error = new Error(
@@ -516,21 +593,47 @@ async function createHoliday({ adminId, holiday_date, name }) {
         holiday_date: holidayDate,
         name: holidayName,
         year: holidayYear,
+        is_all_employees: is_all_employees,
       })
       .returning([
         "id",
         "holiday_date",
         "name",
         "year",
+        "is_all_employees",
         "created_at",
         "updated_at",
       ]);
 
-    // ----------------------------------------
-    // GET ACTIVE EMPLOYEES ONLY
-    // ----------------------------------------
+    let employees;
+    if (is_all_employees) {
+      employees = await getActiveEmployees(trx);
+    } else {
+      employees = await trx("users")
+        .select("id")
+        .whereIn("id", userIds)
+        .where({
+          status: "ACTIVE",
+          role: "EMPLOYEE",
+        })
+        .orderBy("id", "asc")
+        .forUpdate();
 
-    const employees = await getActiveEmployees(trx);
+      if (employees.length !== userIds.length) {
+        const error = new Error(
+          "Every user_id must belong to an active employee"
+        );
+        error.code = "INVALID_EMPLOYEES";
+        throw error;
+      }
+
+      await trx("holiday_employees").insert(
+        employees.map((employee) => ({
+          holiday_id: holiday.id,
+          user_id: employee.id,
+        }))
+      );
+    }
 
     // ----------------------------------------
     // RECALCULATE ATTENDANCE FOR EACH EMPLOYEE
@@ -560,6 +663,8 @@ async function createHoliday({ adminId, holiday_date, name }) {
           holiday_date: holidayDate,
           name: holidayName,
           year: holidayYear,
+          is_all_employees,
+          user_ids: is_all_employees ? [] : employees.map(({ id }) => id),
         },
         reason: `Holiday added: ${holidayName}`,
       })
@@ -576,6 +681,7 @@ async function createHoliday({ adminId, holiday_date, name }) {
         holiday: {
           ...holiday,
           holiday_date: holidayDate,
+          user_ids: is_all_employees ? [] : employees.map(({ id }) => id),
         },
         affected_users: employees.length,
         audit_id: audit.id,
@@ -676,6 +782,7 @@ async function deleteHoliday({ adminId, holidayId }) {
         trx.raw("holiday_date::text as holiday_date"),
         "name",
         "year",
+        "is_all_employees",
         "created_at",
         "updated_at",
       )
@@ -699,13 +806,15 @@ async function deleteHoliday({ adminId, holidayId }) {
 
     await checkMonthLocked(trx, holidayDate);
 
+    const assignedEmployees = holiday.is_all_employees
+      ? await getActiveEmployees(trx)
+      : await trx("holiday_employees")
+        .select("user_id as id")
+        .where("holiday_id", numericHolidayId);
+
     // DELETE HOLIDAY
 
     await trx("holidays").where("id", numericHolidayId).del();
-
-    // GET ACTIVE EMPLOYEES ONLY
-
-    const employees = await getActiveEmployees(trx);
 
     // RECOMPUTE DAY SUMMARIES
 
@@ -727,7 +836,7 @@ async function deleteHoliday({ adminId, holidayId }) {
     // computation.
     // ----------------------------------------
 
-    for (const employee of employees) {
+    for (const employee of assignedEmployees) {
       await recomputeDay(employee.id, holidayDate, trx);
     }
 
@@ -751,6 +860,12 @@ async function deleteHoliday({ adminId, holidayId }) {
           name: holiday.name,
 
           year: holiday.year,
+
+          is_all_employees: holiday.is_all_employees,
+
+          user_ids: holiday.is_all_employees
+            ? []
+            : assignedEmployees.map(({ id }) => id),
         },
 
         after: null,
@@ -775,9 +890,15 @@ async function deleteHoliday({ adminId, holidayId }) {
           name: holiday.name,
 
           year: holiday.year,
+
+          is_all_employees: holiday.is_all_employees,
+
+          user_ids: holiday.is_all_employees
+            ? []
+            : assignedEmployees.map(({ id }) => id),
         },
 
-        affected_users: employees.length,
+        affected_users: assignedEmployees.length,
 
         audit_id: audit.id,
       },

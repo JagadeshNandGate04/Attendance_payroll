@@ -2,6 +2,51 @@ const knex = require("../config/database");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 
+function formatPunchDateTime(value) {
+  if (!value) {
+    return value;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const timeZone = process.env.TIMEZONE || "Asia/Kolkata";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
+  );
+  const localSeconds = Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day),
+    Number(values.hour),
+    Number(values.minute),
+    Number(values.second)
+  );
+  const offsetMinutes =
+    (localSeconds - Math.floor(date.getTime() / 1000) * 1000) / 60_000;
+  const offsetSign = offsetMinutes >= 0 ? "+" : "-";
+  const absoluteOffset = Math.abs(offsetMinutes);
+  const offsetHours = String(Math.floor(absoluteOffset / 60)).padStart(2, "0");
+  const offsetRemainder = String(absoluteOffset % 60).padStart(2, "0");
+  const milliseconds = String(date.getUTCMilliseconds()).padStart(3, "0");
+
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}.${milliseconds}${offsetSign}${offsetHours}:${offsetRemainder}`;
+}
+
 // HELPER
 function generateTemporaryPassword() {
   const characters =
@@ -532,14 +577,14 @@ async function getAdminDashboard({ period = "week" } = {}) {
           summary.is_late
         );
 
-        employeeData.first_in = summary.first_in;
-        employeeData.last_out = summary.last_out;
+        employeeData.first_in = formatPunchDateTime(summary.first_in);
+        employeeData.last_out = formatPunchDateTime(summary.last_out);
         employeeData.attendance_status = summary.status;
       }
 
 // CHECK LATEST PUNCH
 if (lastPunch) {
-  employeeData.last_punch_at = lastPunch.punched_at;
+  employeeData.last_punch_at = formatPunchDateTime(lastPunch.punched_at);
   employeeData.last_punch_direction = lastPunch.direction;
 
   // Latest punch is IN: employee is currently in the office.

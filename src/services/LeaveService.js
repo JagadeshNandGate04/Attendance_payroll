@@ -1,4 +1,5 @@
 const knex = require("../config/database");
+const { applyHolidayEmployeeScope } = require("../utils/holidayUtils");
 const formatDateOnly = require("../utils/dateHelpers").formatDateOnly;
 
 const MONTHLY_LEAVE_LIMIT = 3;
@@ -138,7 +139,11 @@ async function getMonthlyLeaveUsage(trx, userId, {
   const requests = await query;
 
   for (const request of requests) {
-    const holidays = await trx("holidays")
+    const holidays = await applyHolidayEmployeeScope(
+      trx("holidays"),
+      userId,
+      trx
+    )
       .select(trx.raw("holiday_date::text AS holiday_date"))
       .whereBetween("holiday_date", [
         request.from_date,
@@ -542,7 +547,11 @@ async function applyMyLeave({
 
   const weeklyOffDays = await getWeeklyOffDays(knex);
 
-  const holidays = await knex("holidays")
+  const holidays = await applyHolidayEmployeeScope(
+    knex("holidays"),
+    userId,
+    knex
+  )
     .select(
       knex.raw("holiday_date::text AS holiday_date"),
       "name"
@@ -1231,7 +1240,11 @@ async function decideAdminLeave({
         throw error;
       }
 
-      const holidays = await trx("holidays")
+      const holidays = await applyHolidayEmployeeScope(
+        trx("holidays"),
+        leaveRequest.user_id,
+        trx
+      )
         .select(
           trx.raw("holiday_date::text as holiday_date")
         )

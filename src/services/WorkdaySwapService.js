@@ -291,6 +291,15 @@ async function createWorkdaySwap({
         holidayDate,
         replacementDate,
       ])
+      .andWhere(function () {
+        this.where("holidays.is_all_employees", true)
+          .orWhereExists(function () {
+            this.select(trx.raw("1"))
+              .from("holiday_employees")
+              .whereRaw("holiday_employees.holiday_id = holidays.id")
+              .whereIn("holiday_employees.user_id", userIds);
+          });
+      })
       .first("holiday_date");
 
     if (conflictingHoliday) {

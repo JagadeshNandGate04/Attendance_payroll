@@ -100,6 +100,8 @@ async function createHoliday(req, res) {
       adminId: req.user.id,
       holiday_date: req.body.holiday_date,
       name: req.body.name,
+      is_all_employees: req.body.is_all_employees,
+      user_ids: req.body.user_ids,
     });
     return res.status(201).json(result);
   } catch (error) {
