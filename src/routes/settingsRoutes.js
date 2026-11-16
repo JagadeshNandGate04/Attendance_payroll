@@ -46,5 +46,17 @@ router.delete(
   settingsController.deleteWorkdaySwap
 );
 
+router.get(
+  "/getDesignations",
+  adminAuthorize(),
+  settingsController.getDesignations
+);
+
+router.post(
+  "/createDesignation",
+  adminAuthorize(),
+  settingsController.createDesignation
+);
+
 
 module.exports = router;

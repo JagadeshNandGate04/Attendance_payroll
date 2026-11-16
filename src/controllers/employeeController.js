@@ -15,8 +15,6 @@ async function createEmployee(req, res) {
 
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
-    const designationRegex = /^[A-Za-z ]+$/;
-
     if (!name || String(name).trim() === "") {
       errors.name = "Name is required";
     } else if (!nameRegex.test(String(name).trim())) {
@@ -62,8 +60,8 @@ async function createEmployee(req, res) {
 
     if (!designation || String(designation).trim() === "") {
       errors.designation = "Designation is required";
-    } else if (!designationRegex.test(String(designation).trim())) {
-      errors.designation = "Designation can contain only letters and spaces";
+    } else if (String(designation).trim().length > 80) {
+      errors.designation = "Designation must be at most 80 characters";
     }
 
     if (Object.keys(errors).length > 0) {

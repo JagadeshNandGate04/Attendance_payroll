@@ -23,6 +23,22 @@ function generateTemporaryPassword() {
   return password;
 }
 
+function normalizeDesignation(designation) {
+  if (designation === undefined || designation === null) {
+    return designation;
+  }
+
+  if (typeof designation !== "string" || designation.trim().length > 80) {
+    const error = new Error(
+      "Designation must be a string of at most 80 characters",
+    );
+    error.code = "INVALID_DESIGNATION";
+    throw error;
+  }
+
+  return designation.trim() || null;
+}
+
 // // ADMIN DASHBOARD
 
 // async function getAdminDashboard() {
@@ -1269,6 +1285,7 @@ async function createEmployee({
   da,
   special_allowance = 0,
 }) {
+  designation = normalizeDesignation(designation);
 
   // --------------------------------------------
   // VALIDATE REQUIRED FIELDS
@@ -1619,6 +1636,10 @@ async function updateEmployee({
   da,
   special_allowance,
 }) {
+  if (designation !== undefined) {
+    designation = normalizeDesignation(designation);
+  }
+
   // VALIDATE ID
 
   const userIdNumber = Number(userId);

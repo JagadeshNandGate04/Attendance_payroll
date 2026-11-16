@@ -811,12 +811,17 @@ async function recomputeDay(userId, date, trx = null) {
 
 // GET MY ATTENDANCE
 
+
 async function getMyAttendance({
   userId,
   empCode,
   month,
   year,
 }) {
+  // =====================================================
+  // 1. VALIDATE REQUEST
+  // =====================================================
+
   const validated = validateMonthYear(month, year);
 
   const employee = await getEmployee(userId);
@@ -825,12 +830,49 @@ async function getMyAttendance({
     throw new Error("Employee identity mismatch");
   }
 
+  // =====================================================
+  // 2. GET MONTH RANGE
+  // =====================================================
+
   const { startDate, endExclusive } = getMonthRange(
     validated.year,
     validated.month
   );
 
-  const daySummaries = await knex("day_summaries")
+  // Current date in Asia/Kolkata
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  // Last date of the selected month
+  const lastMonthDate = new Date(
+    `${endExclusive}T00:00:00.000Z`
+  );
+
+  lastMonthDate.setUTCDate(
+    lastMonthDate.getUTCDate() - 1
+  );
+
+  const lastMonthDateKey = lastMonthDate
+    .toISOString()
+    .slice(0, 10);
+
+  // Display only up to today.
+  // For a past month, display the entire month.
+  // For a future month, display no dates.
+  const finalDisplayDate =
+    today < lastMonthDateKey
+      ? today
+      : lastMonthDateKey;
+
+  // =====================================================
+  // 3. FETCH EXISTING ATTENDANCE SUMMARIES
+  // =====================================================
+
+  let daySummaries = await knex("day_summaries")
     .select(
       "id",
       "work_date",
@@ -846,31 +888,172 @@ async function getMyAttendance({
       "lop_value",
       "is_locked"
     )
-    .where({ user_id: userId })
+    .where({
+      user_id: userId,
+    })
     .where("work_date", ">=", startDate)
     .where("work_date", "<", endExclusive)
     .orderBy("work_date", "asc");
 
-  // GET LATEST LOP ADJUSTMENTS
+  // =====================================================
+  // 4. IDENTIFY EXISTING DATES
+  // =====================================================
+
+  const existingDates = new Set(
+    daySummaries.map((day) =>
+      normalizeDateKey(day.work_date)
+    )
+  );
+
+  // =====================================================
+  // 5. GENERATE MISSING HISTORICAL SUMMARIES
+  // =====================================================
+
+  if (startDate <= finalDisplayDate) {
+    const currentDate = new Date(
+      `${startDate}T00:00:00.000Z`
+    );
+
+    while (true) {
+      const workDate = currentDate
+        .toISOString()
+        .slice(0, 10);
+
+      if (workDate > finalDisplayDate) {
+        break;
+      }
+
+      // Do not calculate today's attendance.
+      // Today is handled using live punch data.
+      const isCompletedDay = workDate < today;
+
+      // Only calculate dates without an existing summary.
+      // Existing locked summaries remain untouched.
+      if (
+        isCompletedDay &&
+        !existingDates.has(workDate)
+      ) {
+        await recomputeDay(userId, workDate);
+
+        existingDates.add(workDate);
+      }
+
+      currentDate.setUTCDate(
+        currentDate.getUTCDate() + 1
+      );
+    }
+  }
+
+  // =====================================================
+  // 6. FETCH UPDATED ATTENDANCE SUMMARIES
+  // =====================================================
+
+  daySummaries = await knex("day_summaries")
+    .select(
+      "id",
+      "work_date",
+      "status",
+      "first_in",
+      "last_out",
+      "work_min",
+      "break_min",
+      "permission_min",
+      "is_late",
+      "excess_break",
+      "needs_regularization",
+      "lop_value",
+      "is_locked"
+    )
+    .where({
+      user_id: userId,
+    })
+    .where("work_date", ">=", startDate)
+    .where("work_date", "<", endExclusive)
+    .where("work_date", "<=", finalDisplayDate)
+    .orderBy("work_date", "asc");
+
+  // =====================================================
+  // 7. GET LATEST LOP ADJUSTMENTS
+  // =====================================================
+
   const adjustmentMap = await getLatestLopAdjustments({
     userId,
     startDate,
     endExclusive,
   });
 
-  const formattedDaySummaries = daySummaries.map((day) => {
+  // =====================================================
+  // 8. FORMAT ATTENDANCE BY DATE
+  // =====================================================
+
+  const summaryMap = new Map();
+
+  for (const day of daySummaries) {
     const date = normalizeDateKey(day.work_date);
 
-    // IMPORTANT: Monthly map key = userId_workDate
     const adjustment =
       adjustmentMap.get(`${userId}_${date}`) || null;
 
-    return {
+    summaryMap.set(date, {
       ...day,
       work_date: date,
       ...formatLopDetails(day, adjustment),
-    };
-  });
+      is_pending: false,
+    });
+  }
+
+  const formattedDaySummaries = [];
+
+  if (startDate <= finalDisplayDate) {
+    const currentDate = new Date(
+      `${startDate}T00:00:00.000Z`
+    );
+
+    while (true) {
+      const workDate = currentDate
+        .toISOString()
+        .slice(0, 10);
+
+      if (workDate > finalDisplayDate) {
+        break;
+      }
+
+      const savedSummary = summaryMap.get(workDate);
+
+      if (savedSummary) {
+        formattedDaySummaries.push(savedSummary);
+      } else {
+        // Today's attendance may not have a summary yet.
+        // Display it as pending without saving ABSENT.
+        formattedDaySummaries.push({
+          work_date: workDate,
+          status: null,
+          first_in: null,
+          last_out: null,
+          work_min: 0,
+          break_min: 0,
+          permission_min: 0,
+          is_late: false,
+          excess_break: false,
+          needs_regularization: false,
+          lop_value: 0,
+          calculated_lop_value: 0,
+          adjusted_lop_value: null,
+          lop_adjustment: null,
+          is_locked: false,
+          is_pending: true,
+        });
+      }
+
+      currentDate.setUTCDate(
+        currentDate.getUTCDate() + 1
+      );
+    }
+  }
+
+  // =====================================================
+  // 9. MONTHLY TOTALS
+  // =====================================================
 
   const totals = {
     present: 0,
@@ -889,25 +1072,36 @@ async function getMyAttendance({
   };
 
   for (const day of formattedDaySummaries) {
+    // Pending dates must not affect monthly totals.
+    if (day.is_pending) {
+      continue;
+    }
+
     switch (day.status) {
       case STATUS.PRESENT:
         totals.present++;
         break;
+
       case STATUS.HALF_DAY:
         totals.half++;
         break;
+
       case STATUS.ABSENT:
         totals.absent++;
         break;
+
       case STATUS.LEAVE:
         totals.leave++;
         break;
+
       case STATUS.HOLIDAY:
         totals.holiday++;
         break;
+
       case STATUS.WEEKLY_OFF:
         totals.weekly_off++;
         break;
+
       case STATUS.INSUFFICIENT:
         totals.insufficient++;
         break;
@@ -917,13 +1111,17 @@ async function getMyAttendance({
       totals.late_count++;
     }
 
-    totals.work_minutes += Number(day.work_min || 0);
+    totals.work_minutes += Number(
+      day.work_min || 0
+    );
 
     totals.calculated_lop += Number(
       day.calculated_lop_value || 0
     );
 
-    totals.lop_value += Number(day.lop_value || 0);
+    totals.lop_value += Number(
+      day.lop_value || 0
+    );
 
     totals.lop_adjustment +=
       Number(day.lop_value || 0) -
@@ -946,19 +1144,18 @@ async function getMyAttendance({
     totals.lop_value.toFixed(2)
   );
 
-  // TODAY LIVE STATUS
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  // =====================================================
+  // 10. TODAY LIVE STATUS
+  // =====================================================
 
   let liveStatus = "OUT";
   let lastPunch = null;
 
   if (today >= startDate && today < endExclusive) {
-    const punches = await getPunchesForDate(employee, today);
+    const punches = await getPunchesForDate(
+      employee,
+      today
+    );
 
     const duplicateWindow = await getNumberSetting(
       "duplicate_punch_window_min",
@@ -982,6 +1179,10 @@ async function getMyAttendance({
     }
   }
 
+  // =====================================================
+  // 11. RESPONSE
+  // =====================================================
+
   return {
     success: true,
     data: {
@@ -991,18 +1192,216 @@ async function getMyAttendance({
         name: employee.name,
         designation: employee.designation,
       },
+
       month: validated.month,
       year: validated.year,
+
       day_summaries: formattedDaySummaries,
+
       today: {
         date: today,
         status: liveStatus,
         last_punch: lastPunch,
       },
+
       totals,
     },
   };
 }
+
+
+// async function getMyAttendance({
+//   userId,
+//   empCode,
+//   month,
+//   year,
+// }) {
+//   const validated = validateMonthYear(month, year);
+
+//   const employee = await getEmployee(userId);
+
+//   if (empCode && employee.emp_code !== empCode) {
+//     throw new Error("Employee identity mismatch");
+//   }
+
+//   const { startDate, endExclusive } = getMonthRange(
+//     validated.year,
+//     validated.month
+//   );
+
+//   const daySummaries = await knex("day_summaries")
+//     .select(
+//       "id",
+//       "work_date",
+//       "status",
+//       "first_in",
+//       "last_out",
+//       "work_min",
+//       "break_min",
+//       "permission_min",
+//       "is_late",
+//       "excess_break",
+//       "needs_regularization",
+//       "lop_value",
+//       "is_locked"
+//     )
+//     .where({ user_id: userId })
+//     .where("work_date", ">=", startDate)
+//     .where("work_date", "<", endExclusive)
+//     .orderBy("work_date", "asc");
+
+//   // GET LATEST LOP ADJUSTMENTS
+//   const adjustmentMap = await getLatestLopAdjustments({
+//     userId,
+//     startDate,
+//     endExclusive,
+//   });
+
+//   const formattedDaySummaries = daySummaries.map((day) => {
+//     const date = normalizeDateKey(day.work_date);
+
+//     // IMPORTANT: Monthly map key = userId_workDate
+//     const adjustment =
+//       adjustmentMap.get(`${userId}_${date}`) || null;
+
+//     return {
+//       ...day,
+//       work_date: date,
+//       ...formatLopDetails(day, adjustment),
+//     };
+//   });
+
+//   const totals = {
+//     present: 0,
+//     half: 0,
+//     absent: 0,
+//     leave: 0,
+//     holiday: 0,
+//     weekly_off: 0,
+//     insufficient: 0,
+//     late_count: 0,
+//     work_hours: 0,
+//     work_minutes: 0,
+//     calculated_lop: 0,
+//     lop_adjustment: 0,
+//     lop_value: 0,
+//   };
+
+//   for (const day of formattedDaySummaries) {
+//     switch (day.status) {
+//       case STATUS.PRESENT:
+//         totals.present++;
+//         break;
+//       case STATUS.HALF_DAY:
+//         totals.half++;
+//         break;
+//       case STATUS.ABSENT:
+//         totals.absent++;
+//         break;
+//       case STATUS.LEAVE:
+//         totals.leave++;
+//         break;
+//       case STATUS.HOLIDAY:
+//         totals.holiday++;
+//         break;
+//       case STATUS.WEEKLY_OFF:
+//         totals.weekly_off++;
+//         break;
+//       case STATUS.INSUFFICIENT:
+//         totals.insufficient++;
+//         break;
+//     }
+
+//     if (day.is_late) {
+//       totals.late_count++;
+//     }
+
+//     totals.work_minutes += Number(day.work_min || 0);
+
+//     totals.calculated_lop += Number(
+//       day.calculated_lop_value || 0
+//     );
+
+//     totals.lop_value += Number(day.lop_value || 0);
+
+//     totals.lop_adjustment +=
+//       Number(day.lop_value || 0) -
+//       Number(day.calculated_lop_value || 0);
+//   }
+
+//   totals.work_hours = Number(
+//     (totals.work_minutes / 60).toFixed(2)
+//   );
+
+//   totals.calculated_lop = Number(
+//     totals.calculated_lop.toFixed(2)
+//   );
+
+//   totals.lop_adjustment = Number(
+//     totals.lop_adjustment.toFixed(2)
+//   );
+
+//   totals.lop_value = Number(
+//     totals.lop_value.toFixed(2)
+//   );
+
+//   // TODAY LIVE STATUS
+//   const today = new Intl.DateTimeFormat("en-CA", {
+//     timeZone: "Asia/Kolkata",
+//     year: "numeric",
+//     month: "2-digit",
+//     day: "2-digit",
+//   }).format(new Date());
+
+//   let liveStatus = "OUT";
+//   let lastPunch = null;
+
+//   if (today >= startDate && today < endExclusive) {
+//     const punches = await getPunchesForDate(employee, today);
+
+//     const duplicateWindow = await getNumberSetting(
+//       "duplicate_punch_window_min",
+//       3
+//     );
+
+//     const validPunches = removeDuplicatePunches(
+//       punches,
+//       duplicateWindow
+//     );
+
+//     lastPunch = validPunches.length
+//       ? validPunches[validPunches.length - 1]
+//       : null;
+
+//     if (
+//       lastPunch &&
+//       lastPunch.direction === DIRECTIONS.IN
+//     ) {
+//       liveStatus = "IN";
+//     }
+//   }
+
+//   return {
+//     success: true,
+//     data: {
+//       employee: {
+//         id: employee.id,
+//         emp_code: employee.emp_code,
+//         name: employee.name,
+//         designation: employee.designation,
+//       },
+//       month: validated.month,
+//       year: validated.year,
+//       day_summaries: formattedDaySummaries,
+//       today: {
+//         date: today,
+//         status: liveStatus,
+//         last_punch: lastPunch,
+//       },
+//       totals,
+//     },
+//   };
+// }
 
 // GET MY ATTENDANCE FOR A SPECIFIC DAY
 

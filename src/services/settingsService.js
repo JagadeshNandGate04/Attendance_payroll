@@ -785,6 +785,83 @@ async function deleteHoliday({ adminId, holidayId }) {
   });
 }
 
+async function getDesignations() {
+  const designations = await knex("designations")
+    .select("id", "name", "created_at", "updated_at")
+    .orderBy("name", "asc");
+
+  return {
+    success: true,
+    message: "Designations fetched successfully",
+    data: {
+      designations,
+    },
+  };
+}
+
+async function createDesignation({ adminId, name }) {
+  if (typeof name !== "string" || !name.trim() || name.trim().length > 80) {
+    const error = new Error(
+      "Designation name must be a non-empty string of at most 80 characters",
+    );
+    error.code = "INVALID_DESIGNATION";
+    throw error;
+  }
+
+  const normalizedName = name.trim();
+
+  return knex.transaction(async (trx) => {
+    await validateAdmin(trx, adminId);
+
+    const existing = await trx("designations")
+      .whereRaw("LOWER(name) = LOWER(?)", [normalizedName])
+      .first("id");
+
+    if (existing) {
+      const error = new Error("Designation already exists");
+      error.code = "DUPLICATE_DESIGNATION";
+      throw error;
+    }
+
+    let designation;
+    try {
+      [designation] = await trx("designations")
+        .insert({ name: normalizedName })
+        .returning(["id", "name", "created_at", "updated_at"]);
+    } catch (error) {
+      if (error.code === "23505" &&
+          error.constraint === "designations_name_lower_unique") {
+        const duplicateError = new Error("Designation already exists");
+        duplicateError.code = "DUPLICATE_DESIGNATION";
+        throw duplicateError;
+      }
+
+      throw error;
+    }
+
+    const [audit] = await trx("audit_log")
+      .insert({
+        actor_id: adminId,
+        action: "DESIGNATION_ADDED",
+        entity_type: "designations",
+        entity_id: designation.id,
+        before: null,
+        after: designation,
+        reason: `Designation added: ${normalizedName}`,
+      })
+      .returning(["id"]);
+
+    return {
+      success: true,
+      message: "Designation added successfully",
+      data: {
+        designation,
+        audit_id: audit.id,
+      },
+    };
+  });
+}
+
 module.exports = {
   getSettings,
   updateSettings,
@@ -800,4 +877,6 @@ module.exports = {
   checkMonthLocked,
   getActiveEmployees,
   rewriteHolidayDaySummary,
+  getDesignations,
+  createDesignation,
 };

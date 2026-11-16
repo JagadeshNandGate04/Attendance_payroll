@@ -223,6 +223,45 @@ async function deleteWorkdaySwap(req, res) {
   }
 }
 
+async function getDesignations(req, res) {
+  try {
+    const result = await settingsService.getDesignations();
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Get designations error:", error);
+    return res.status(500).json({
+      success: false,
+      code: error.code || "GET_DESIGNATIONS_FAILED",
+      message: "Failed to fetch designations",
+    });
+  }
+}
+
+async function createDesignation(req, res) {
+  try {
+    const result = await settingsService.createDesignation({
+      adminId: req.user.id,
+      name: req.body.name,
+    });
+    return res.status(201).json(result);
+  } catch (error) {
+    console.error("Create designation error:", error);
+    const statusCode = error.code === "DUPLICATE_DESIGNATION"
+      ? 409
+      : error.code === "INVALID_DESIGNATION"
+        ? 400
+        : 500;
+
+    return res.status(statusCode).json({
+      success: false,
+      code: error.code || "CREATE_DESIGNATION_FAILED",
+      message: statusCode === 500
+        ? "Failed to create designation"
+        : error.message,
+    });
+  }
+}
+
 
 module.exports = {
   getSettings,
@@ -233,4 +272,6 @@ module.exports = {
   getWorkdaySwaps,
   createWorkdaySwap,
   deleteWorkdaySwap,
+  getDesignations,
+  createDesignation,
 };

@@ -212,6 +212,7 @@ async function createEmployee(req, res) {
       "INVALID_EMAIL",
       "INVALID_DATE",
       "INVALID_SALARY",
+      "INVALID_DESIGNATION",
     ];
 
     if (badRequestErrors.includes(error.code)) {
@@ -335,6 +336,14 @@ async function updateEmployee(req, res) {
     }
 
     if (error.code === "INVALID_SALARY") {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message
+      });
+    }
+
+    if (error.code === "INVALID_DESIGNATION") {
       return res.status(400).json({
         success: false,
         error: error.code,
