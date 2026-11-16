@@ -1406,6 +1406,88 @@ async function getEmployeeDesignationHistory(req, res) {
   }
 }
 
+// SUBMIT IDENTITY DETAILS
+
+async function submitIdentityDetailsRequest(req, res) {
+  try {
+    const result =
+      await employeeProfileService.submitIdentityDetailsRequest({
+        userId: req.user.id,
+        identityData: req.body,
+      });
+
+    return res.status(201).json({
+      success: true,
+      message: result.message,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Submit identity details request error:", error);
+
+    return res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.code || "IDENTITY_REQUEST_FAILED",
+      message: error.message || "Failed to submit identity details request",
+      data: null,
+    });
+  }
+}
+
+// APPROVE IDENTITY REQUEST
+
+async function approveIdentityDetailsRequest(req, res) {
+  try {
+    const result =
+      await employeeProfileService.approveIdentityDetailsRequest({
+        requestId: req.params.id,
+        adminId: req.user.id,
+        remarks: req.body.remarks,
+      });
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Approve identity details error:", error);
+
+    return res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.code || "IDENTITY_APPROVAL_FAILED",
+      message: error.message || "Failed to approve identity details",
+      data: null,
+    });
+  }
+}
+
+// REJECT IDENTITY REQUEST
+
+async function rejectIdentityDetailsRequest(req, res) {
+  try {
+    const result =
+      await employeeProfileService.rejectIdentityDetailsRequest({
+        requestId: req.params.id,
+        adminId: req.user.id,
+        remarks: req.body.remarks,
+      });
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Reject identity details error:", error);
+
+    return res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.code || "IDENTITY_REJECTION_FAILED",
+      message: error.message || "Failed to reject identity details",
+      data: null,
+    });
+  }
+}
 
 
 module.exports = {
@@ -1439,4 +1521,7 @@ module.exports = {
    rejectWorkExperienceRequest,
    updateEmployeeDesignation,
    getEmployeeDesignationHistory,
+   submitIdentityDetailsRequest,
+   approveIdentityDetailsRequest,
+   rejectIdentityDetailsRequest,
 };

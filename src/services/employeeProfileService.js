@@ -1,6 +1,10 @@
 
 const knex = require("../config/database");
-
+const {
+  encryptValue,
+  decryptValue,
+  maskIdentityValue,
+} = require("../utils/encryption");
 const fs = require("fs").promises;
 const path = require("path");
 const crypto = require("crypto");
@@ -159,6 +163,420 @@ function calculateCurrentCompanyExperience(dateOfJoining) {
 // =====================================================
 // GET MY EMPLOYEE PROFILE
 // =====================================================
+
+// async function getMyEmployeeProfile({ userId }) {
+//   if (
+//     !userId ||
+//     !Number.isInteger(Number(userId)) ||
+//     Number(userId) <= 0
+//   ) {
+//     const error = new Error("Invalid employee ID");
+//     error.code = "INVALID_EMPLOYEE_ID";
+//     throw error;
+//   }
+
+//   const normalizedUserId = Number(userId);
+
+//   // =====================================================
+//   // FETCH EMPLOYEE AND PROFILE
+//   // =====================================================
+
+//   const employee = await knex("users as u")
+//     .leftJoin(
+//       "employee_profiles as ep",
+//       "ep.user_id",
+//       "u.id"
+//     )
+//     .select(
+//       "u.id",
+//       "u.emp_code",
+//       "u.name",
+//       "u.email",
+//       "u.phone",
+//       "u.designation",
+//       "u.date_of_joining",
+//       "u.role",
+//       "u.status",
+//       "ep.id as profile_id",
+//       "ep.profile_picture_mime_type",
+//       "ep.profile_picture_size_bytes",
+//       "ep.marital_status",
+//       "ep.father_spouse_name",
+//       "ep.religion",
+//       "ep.caste",
+//       "ep.mother_tongue",
+//       "ep.cug_mobile_no",
+//       "ep.city_of_birth",
+//       "ep.country_of_birth",
+//       "ep.nationality",
+//       "ep.community",
+//       "ep.official_email",
+//       "ep.retirement_age",
+//       "ep.highest_qualification_level",
+//       "ep.blood_group",
+//       "ep.height_cm",
+//       "ep.weight_kg",
+//       "ep.date_of_birth",
+//       "ep.secondary_mobile_no",
+//       "ep.contact_email",
+//       "ep.created_at as profile_created_at",
+//       "ep.updated_at as profile_updated_at"
+//     )
+//     .where("u.id", normalizedUserId)
+//     .first();
+
+//   if (
+//     !employee ||
+//     String(employee.role).toUpperCase() !== "EMPLOYEE"
+//   ) {
+//     const error = new Error("Employee not found");
+//     error.code = "EMPLOYEE_NOT_FOUND";
+//     throw error;
+//   }
+
+//   if (!employee.profile_id) {
+//     const error = new Error("Employee profile not found");
+//     error.code = "PROFILE_NOT_FOUND";
+//     throw error;
+//   }
+
+//   // =====================================================
+//   // FETCH ALL PROFILE SECTIONS
+//   // =====================================================
+
+//   const [
+//     addresses,
+//     emergencyContacts,
+//     familyMembers,
+//     qualifications,
+//     workExperiences,
+//     identityDetails,
+//     statutoryDetails,
+//     bankDetails,
+//     documents,
+//     pendingRequests,
+//     latestDesignationHistory,
+//   ] = await Promise.all([
+
+//     // ADDRESSES
+//     knex("employee_addresses")
+//       .select(
+//         "id",
+//         "address_type",
+//         "address_line_1",
+//         "address_line_2",
+//         "address_line_3",
+//         "city",
+//         "district",
+//         "state",
+//         "pincode",
+//         "country",
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .orderBy("address_type", "asc"),
+
+//     // EMERGENCY CONTACTS
+//     knex("employee_emergency_contacts")
+//       .select(
+//         "id",
+//         "contact_name",
+//         "relation",
+//         "mobile_no",
+//         "alternate_mobile_no",
+//         "address",
+//         "is_primary",
+//         "status",
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .orderBy("is_primary", "desc")
+//       .orderBy("id", "asc"),
+
+//     // FAMILY MEMBERS
+//     knex("employee_family_members")
+//       .select(
+//         "id",
+//         "name",
+//         "relation",
+//         "gender",
+//         "date_of_birth",
+//         "profession",
+//         "family_member_type",
+//         "address",
+//         "status",
+//         "remarks",
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .orderBy("id", "asc"),
+
+//     // QUALIFICATIONS
+//     knex("employee_qualifications")
+//       .select(
+//         "id",
+//         "qualification_type",
+//         "qualification",
+//         "institute_name",
+//         "specialization",
+//         "from_year",
+//         "to_year",
+//         "status",
+//         "remarks",
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .orderBy("to_year", "desc"),
+
+//     // PREVIOUS WORK EXPERIENCES
+//     knex("employee_work_experiences")
+//       .select(
+//         "id",
+//         "previous_org_name",
+//         "designation",
+//         "from_date",
+//         "to_date",
+//         "status",
+//         "remarks",
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .orderBy("from_date", "desc"),
+
+//     // IDENTITY DETAILS
+//     // Encrypted identity numbers are deliberately not selected.
+//     knex("employee_identity_details")
+//       .select(
+//         "id",
+//         knex.raw(
+//           "CASE WHEN aadhaar_number_encrypted IS NOT NULL AND aadhaar_number_encrypted <> '' THEN TRUE ELSE FALSE END AS aadhaar_number_available"
+//         ),
+//         knex.raw(
+//           "CASE WHEN pan_number_encrypted IS NOT NULL AND pan_number_encrypted <> '' THEN TRUE ELSE FALSE END AS pan_number_available"
+//         ),
+//         knex.raw(
+//           "CASE WHEN voter_id_number_encrypted IS NOT NULL AND voter_id_number_encrypted <> '' THEN TRUE ELSE FALSE END AS voter_id_number_available"
+//         ),
+//         knex.raw(
+//           "CASE WHEN driving_license_number_encrypted IS NOT NULL AND driving_license_number_encrypted <> '' THEN TRUE ELSE FALSE END AS driving_license_number_available"
+//         ),
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .first(),
+
+//     // PF / ESI DETAILS
+//     // Encrypted statutory numbers are deliberately not selected.
+//     knex("employee_statutory_details")
+//       .select(
+//         "id",
+//         "is_pf_eligible",
+//         knex.raw(
+//           "CASE WHEN pf_account_no_encrypted IS NOT NULL AND pf_account_no_encrypted <> '' THEN TRUE ELSE FALSE END AS pf_account_no_available"
+//         ),
+//         knex.raw(
+//           "CASE WHEN uan_no_encrypted IS NOT NULL AND uan_no_encrypted <> '' THEN TRUE ELSE FALSE END AS uan_no_available"
+//         ),
+//         "is_esi_eligible",
+//         knex.raw(
+//           "CASE WHEN esi_no_encrypted IS NOT NULL AND esi_no_encrypted <> '' THEN TRUE ELSE FALSE END AS esi_no_available"
+//         ),
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .first(),
+
+//     // BANK DETAILS
+//     // Account number is encrypted and deliberately not selected.
+//     knex("employee_bank_details")
+//       .select(
+//         "id",
+//         "bank_name",
+//         "branch_name",
+//         "ifsc_code",
+//         knex.raw(
+//           "CASE WHEN account_number_encrypted IS NOT NULL AND account_number_encrypted <> '' THEN TRUE ELSE FALSE END AS account_number_available"
+//         ),
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .first(),
+
+//     // DOCUMENTS
+//     // Internal file paths are not exposed.
+//     knex("employee_documents")
+//       .select(
+//         "id",
+//         "change_request_id",
+//         "document_type",
+//         "document_name",
+//         "original_file_name",
+//         "mime_type",
+//         "file_size_bytes",
+//         "file_extension",
+//         "description",
+//         "status",
+//         "reviewed_by",
+//         "reviewed_at",
+//         "approval_remarks",
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .orderBy("created_at", "desc"),
+
+//     // PENDING PROFILE CHANGE REQUESTS
+//     knex("employee_profile_change_requests")
+//       .select(
+//         "id",
+//         "section",
+//         "record_id",
+//         "request_type",
+//         "existing_data",
+//         "requested_data",
+//         "status",
+//         "created_at",
+//         "updated_at"
+//       )
+//       .where({
+//         user_id: normalizedUserId,
+//         status: "PENDING",
+//       })
+//       .orderBy("created_at", "desc"),
+
+//     // LATEST DESIGNATION HISTORY
+//     knex("employee_designation_history")
+//       .select(
+//         knex.raw(
+//           "effective_date::text as effective_date"
+//         )
+//       )
+//       .where({ user_id: normalizedUserId })
+//       .orderBy("effective_date", "desc")
+//       .orderBy("id", "desc")
+//       .first(),
+//   ]);
+
+//   // =====================================================
+//   // PREPARE EMPLOYEE RESPONSE
+//   // =====================================================
+
+//   const {
+//     profile_id,
+//     profile_picture_mime_type,
+//     profile_picture_size_bytes,
+//     role,
+//     ...employeeData
+//   } = employee;
+
+//   // =====================================================
+//   // CURRENT COMPANY EXPERIENCE
+//   // Calculated from original date of joining.
+//   // =====================================================
+
+//   employeeData.current_company_experience =
+//     calculateCurrentCompanyExperience(
+//       employee.date_of_joining
+//     );
+
+//   // =====================================================
+//   // CURRENT DESIGNATION EXPERIENCE
+//   // Calculated from latest effective designation date.
+//   // If no history exists, use date of joining.
+//   // =====================================================
+
+//   const designationStartDate =
+//     latestDesignationHistory?.effective_date ||
+//     employee.date_of_joining;
+
+//   employeeData.current_designation_experience =
+//     calculateCurrentCompanyExperience(
+//       designationStartDate
+//     );
+
+//   // =====================================================
+//   // RESPONSE
+//   // =====================================================
+
+//   return {
+//     success: true,
+//     message: "Employee profile fetched successfully",
+//     data: {
+//       employee: employeeData,
+
+//       profile: {
+//         profile_picture: {
+//           available: Boolean(profile_picture_mime_type),
+//           mime_type: profile_picture_mime_type,
+//           size_bytes: profile_picture_size_bytes,
+//           url: profile_picture_mime_type
+//             ? "/api/v1/employee-profile/me/profile-picture"
+//             : null,
+//         },
+
+//         marital_status: employee.marital_status,
+//         father_spouse_name: employee.father_spouse_name,
+//         religion: employee.religion,
+//         caste: employee.caste,
+//         mother_tongue: employee.mother_tongue,
+//         cug_mobile_no: employee.cug_mobile_no,
+//         city_of_birth: employee.city_of_birth,
+//         country_of_birth: employee.country_of_birth,
+//         nationality: employee.nationality,
+//         community: employee.community,
+//         official_email: employee.official_email,
+//         retirement_age: employee.retirement_age,
+//         highest_qualification_level:
+//           employee.highest_qualification_level,
+//         blood_group: employee.blood_group,
+//         height_cm: employee.height_cm,
+//         weight_kg: employee.weight_kg,
+//         date_of_birth: employee.date_of_birth,
+//         secondary_mobile_no: employee.secondary_mobile_no,
+//         contact_email: employee.contact_email,
+//         created_at: employee.profile_created_at,
+//         updated_at: employee.profile_updated_at,
+//       },
+
+//       addresses,
+
+//       emergency_contacts: emergencyContacts,
+
+//       family_members: familyMembers,
+
+//       qualifications,
+
+//       work_experiences: workExperiences,
+
+//       identity_details: identityDetails || null,
+
+//       statutory_details: statutoryDetails || null,
+
+//       bank_details: bankDetails || null,
+
+//       documents,
+
+//       pending_requests: pendingRequests.map((request) => ({
+//         ...request,
+//         existing_data: sanitizeSensitiveData(
+//           request.existing_data
+//         ),
+//         requested_data: sanitizeSensitiveData(
+//           request.requested_data
+//         ),
+//       })),
+//     },
+//   };
+// }
+
 
 async function getMyEmployeeProfile({ userId }) {
   if (
@@ -345,22 +763,14 @@ async function getMyEmployeeProfile({ userId }) {
       .orderBy("from_date", "desc"),
 
     // IDENTITY DETAILS
-    // Encrypted identity numbers are deliberately not selected.
+    // Encrypted values are decrypted internally and masked below.
     knex("employee_identity_details")
       .select(
         "id",
-        knex.raw(
-          "CASE WHEN aadhaar_number_encrypted IS NOT NULL AND aadhaar_number_encrypted <> '' THEN TRUE ELSE FALSE END AS aadhaar_number_available"
-        ),
-        knex.raw(
-          "CASE WHEN pan_number_encrypted IS NOT NULL AND pan_number_encrypted <> '' THEN TRUE ELSE FALSE END AS pan_number_available"
-        ),
-        knex.raw(
-          "CASE WHEN voter_id_number_encrypted IS NOT NULL AND voter_id_number_encrypted <> '' THEN TRUE ELSE FALSE END AS voter_id_number_available"
-        ),
-        knex.raw(
-          "CASE WHEN driving_license_number_encrypted IS NOT NULL AND driving_license_number_encrypted <> '' THEN TRUE ELSE FALSE END AS driving_license_number_available"
-        ),
+        "aadhaar_number_encrypted",
+        "pan_number_encrypted",
+        "voter_id_number_encrypted",
+        "driving_license_number_encrypted",
         "created_at",
         "updated_at"
       )
@@ -462,6 +872,68 @@ async function getMyEmployeeProfile({ userId }) {
   ]);
 
   // =====================================================
+  // MASK IDENTITY DETAILS
+  // =====================================================
+
+  const maskedIdentityDetails = identityDetails
+    ? {
+        id: identityDetails.id,
+
+        aadhaar_number_available: Boolean(
+          identityDetails.aadhaar_number_encrypted
+        ),
+
+        aadhaar_number: identityDetails.aadhaar_number_encrypted
+          ? maskIdentityValue(
+              decryptValue(
+                identityDetails.aadhaar_number_encrypted
+              )
+            )
+          : null,
+
+        pan_number_available: Boolean(
+          identityDetails.pan_number_encrypted
+        ),
+
+        pan_number: identityDetails.pan_number_encrypted
+          ? maskIdentityValue(
+              decryptValue(
+                identityDetails.pan_number_encrypted
+              )
+            )
+          : null,
+
+        voter_id_number_available: Boolean(
+          identityDetails.voter_id_number_encrypted
+        ),
+
+        voter_id_number: identityDetails.voter_id_number_encrypted
+          ? maskIdentityValue(
+              decryptValue(
+                identityDetails.voter_id_number_encrypted
+              )
+            )
+          : null,
+
+        driving_license_number_available: Boolean(
+          identityDetails.driving_license_number_encrypted
+        ),
+
+        driving_license_number:
+          identityDetails.driving_license_number_encrypted
+            ? maskIdentityValue(
+                decryptValue(
+                  identityDetails.driving_license_number_encrypted
+                )
+              )
+            : null,
+
+        created_at: identityDetails.created_at,
+        updated_at: identityDetails.updated_at,
+      }
+    : null;
+
+  // =====================================================
   // PREPARE EMPLOYEE RESPONSE
   // =====================================================
 
@@ -552,7 +1024,7 @@ async function getMyEmployeeProfile({ userId }) {
 
       work_experiences: workExperiences,
 
-      identity_details: identityDetails || null,
+      identity_details: maskedIdentityDetails,
 
       statutory_details: statutoryDetails || null,
 
@@ -572,7 +1044,6 @@ async function getMyEmployeeProfile({ userId }) {
     },
   };
 }
-
 
 
 
@@ -5026,6 +5497,679 @@ async function getEmployeeDesignationHistory({
 }
 
 
+// =====================================================
+// IDENTITY DETAILS - EMPLOYEE APPROVAL WORKFLOW
+// =====================================================
+
+const IDENTITY_FIELDS = [
+  "aadhaar_number",
+  "pan_number",
+  "voter_id_number",
+  "driving_license_number",
+];
+
+const IDENTITY_COLUMN_MAP = {
+  aadhaar_number: "aadhaar_number_encrypted",
+  pan_number: "pan_number_encrypted",
+  voter_id_number: "voter_id_number_encrypted",
+  driving_license_number: "driving_license_number_encrypted",
+};
+
+function createIdentityError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+// =====================================================
+// VALIDATE IDENTITY DATA
+// =====================================================
+
+function validateIdentityData(data) {
+  if (
+    !data ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  ) {
+    throw createIdentityError(
+      "Identity details must be a valid object"
+    );
+  }
+
+  const keys = Object.keys(data);
+
+  const invalidFields = keys.filter(
+    (key) => !IDENTITY_FIELDS.includes(key)
+  );
+
+  if (invalidFields.length > 0) {
+    throw createIdentityError(
+      `Invalid identity fields: ${invalidFields.join(", ")}`
+    );
+  }
+
+  const normalized = {};
+
+  for (const field of keys) {
+    const value = data[field];
+
+    if (
+      value !== null &&
+      value !== "" &&
+      typeof value !== "string"
+    ) {
+      throw createIdentityError(
+        `${field} must be a string or null`
+      );
+    }
+
+    if (value === null || value === "") {
+      normalized[field] = null;
+      continue;
+    }
+
+    const cleaned = value.trim().toUpperCase();
+
+    if (!cleaned) {
+      normalized[field] = null;
+      continue;
+    }
+
+    if (field === "aadhaar_number") {
+      const aadhaar = cleaned.replace(/[\s-]/g, "");
+
+      if (!/^\d{12}$/.test(aadhaar)) {
+        throw createIdentityError(
+          "Aadhaar number must contain exactly 12 digits"
+        );
+      }
+
+      normalized[field] = aadhaar;
+      continue;
+    }
+
+    if (field === "pan_number") {
+      if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(cleaned)) {
+        throw createIdentityError(
+          "Invalid PAN number format"
+        );
+      }
+
+      normalized[field] = cleaned;
+      continue;
+    }
+
+    if (field === "voter_id_number") {
+      const voterId = cleaned.replace(/[\s-]/g, "");
+
+      if (!/^[A-Z0-9]{6,20}$/.test(voterId)) {
+        throw createIdentityError(
+          "Invalid Voter ID format"
+        );
+      }
+
+      normalized[field] = voterId;
+      continue;
+    }
+
+    if (field === "driving_license_number") {
+      const license = cleaned.replace(/\s/g, "");
+
+      if (!/^[A-Z0-9-]{5,25}$/.test(license)) {
+        throw createIdentityError(
+          "Invalid Driving Licence number format"
+        );
+      }
+
+      normalized[field] = license;
+    }
+  }
+
+  if (keys.length === 0) {
+    throw createIdentityError(
+      "At least one identity field is required"
+    );
+  }
+
+  return normalized;
+}
+
+// =====================================================
+// ENCRYPT IDENTITY DATA
+// =====================================================
+
+function encryptIdentityData(data) {
+  const encryptedData = {};
+
+  for (const field of IDENTITY_FIELDS) {
+    const column = IDENTITY_COLUMN_MAP[field];
+
+    if (
+      Object.prototype.hasOwnProperty.call(data, field)
+    ) {
+      encryptedData[column] = encryptValue(data[field]);
+    }
+  }
+
+  return encryptedData;
+}
+
+// =====================================================
+// EMPLOYEE - SUBMIT IDENTITY REQUEST
+// =====================================================
+
+async function submitIdentityDetailsRequest({
+  userId,
+  identityData,
+}) {
+  if (
+    !identityData ||
+    typeof identityData !== "object" ||
+    Array.isArray(identityData)
+  ) {
+    throw createIdentityError(
+      "Identity request data is required"
+    );
+  }
+
+  const requestType = String(
+    identityData.request_type || ""
+  ).toUpperCase();
+
+  if (!["CREATE", "UPDATE", "DELETE"].includes(requestType)) {
+    throw createIdentityError(
+      "request_type must be CREATE, UPDATE or DELETE"
+    );
+  }
+
+  const allowedKeys = [
+    "request_type",
+    "id",
+    ...IDENTITY_FIELDS,
+  ];
+
+  const invalidKeys = Object.keys(identityData).filter(
+    (key) => !allowedKeys.includes(key)
+  );
+
+  if (invalidKeys.length > 0) {
+    throw createIdentityError(
+      `Invalid request fields: ${invalidKeys.join(", ")}`
+    );
+  }
+
+  const hasId = identityData.id !== undefined &&
+    identityData.id !== null;
+
+  if (requestType === "CREATE" && hasId) {
+    throw createIdentityError(
+      "ID must not be provided for CREATE"
+    );
+  }
+
+  if (
+    ["UPDATE", "DELETE"].includes(requestType) &&
+    (
+      !hasId ||
+      !Number.isInteger(Number(identityData.id)) ||
+      Number(identityData.id) <= 0
+    )
+  ) {
+    throw createIdentityError(
+      "A valid identity record ID is required"
+    );
+  }
+
+  const submittedFields = {};
+
+  for (const field of IDENTITY_FIELDS) {
+    if (
+      Object.prototype.hasOwnProperty.call(
+        identityData,
+        field
+      )
+    ) {
+      submittedFields[field] = identityData[field];
+    }
+  }
+
+  if (
+    requestType !== "DELETE" &&
+    Object.keys(submittedFields).length === 0
+  ) {
+    throw createIdentityError(
+      "At least one identity field must be provided"
+    );
+  }
+
+  if (
+    requestType === "DELETE" &&
+    Object.keys(submittedFields).length > 0
+  ) {
+    throw createIdentityError(
+      "DELETE request must contain only request_type and id"
+    );
+  }
+
+  return knex.transaction(async (trx) => {
+    // Lock employee row.
+    const employee = await trx("users")
+      .select("id", "role")
+      .where({ id: userId })
+      .forUpdate()
+      .first();
+
+    if (
+      !employee ||
+      String(employee.role).toUpperCase() !== "EMPLOYEE"
+    ) {
+      throw createIdentityError(
+        "Employee not found",
+        404
+      );
+    }
+
+    // Fetch existing identity record.
+    const existingIdentity = await trx(
+      "employee_identity_details"
+    )
+      .where({ user_id: userId })
+      .forUpdate()
+      .first();
+
+    let recordId = null;
+    let existingData = {};
+    let requestedData = {};
+
+    // CREATE
+    if (requestType === "CREATE") {
+      if (existingIdentity) {
+        throw createIdentityError(
+          "Identity details already exist. Use UPDATE instead"
+        );
+      }
+
+      // Existing data is required by the database.
+      existingData = {};
+
+      const validatedData =
+        validateIdentityData(submittedFields);
+
+      requestedData =
+        encryptIdentityData(validatedData);
+    }
+
+    // UPDATE
+    if (requestType === "UPDATE") {
+      const identityId = Number(identityData.id);
+
+      if (
+        !existingIdentity ||
+        Number(existingIdentity.id) !== identityId
+      ) {
+        throw createIdentityError(
+          "Identity record not found",
+          404
+        );
+      }
+
+      recordId = existingIdentity.id;
+
+      const validatedData =
+        validateIdentityData(submittedFields);
+
+      // Capture existing encrypted values.
+      existingData = {};
+
+      for (const column of Object.values(
+        IDENTITY_COLUMN_MAP
+      )) {
+        existingData[column] =
+          existingIdentity[column] ?? null;
+      }
+
+      // Preserve unchanged encrypted values.
+      requestedData = {
+        ...existingData,
+        ...encryptIdentityData(validatedData),
+      };
+    }
+
+    // DELETE
+    if (requestType === "DELETE") {
+      const identityId = Number(identityData.id);
+
+      if (
+        !existingIdentity ||
+        Number(existingIdentity.id) !== identityId
+      ) {
+        throw createIdentityError(
+          "Identity record not found",
+          404
+        );
+      }
+
+      recordId = existingIdentity.id;
+
+      existingData = {};
+
+      for (const column of Object.values(
+        IDENTITY_COLUMN_MAP
+      )) {
+        existingData[column] =
+          existingIdentity[column] ?? null;
+      }
+
+      requestedData = {};
+    }
+
+    // Prevent another pending request for this record.
+    let pendingQuery = trx(
+      "employee_profile_change_requests"
+    )
+      .where({
+        user_id: userId,
+        section: "IDENTITY",
+        status: "PENDING",
+      });
+
+    if (requestType === "CREATE") {
+      pendingQuery = pendingQuery.whereNull("record_id");
+    } else {
+      pendingQuery = pendingQuery.where({
+        record_id: recordId,
+      });
+    }
+
+    const pendingRequest = await pendingQuery
+      .forUpdate()
+      .first();
+
+    if (pendingRequest) {
+      throw createIdentityError(
+        "A pending identity request already exists"
+      );
+    }
+
+    // Insert encrypted request.
+    const [request] = await trx(
+      "employee_profile_change_requests"
+    )
+      .insert({
+        user_id: userId,
+        section: "IDENTITY",
+        record_id: recordId,
+        request_type: requestType,
+        existing_data: JSON.stringify(existingData),
+        requested_data: JSON.stringify(requestedData),
+        status: "PENDING",
+      })
+      .returning([
+        "id",
+        "user_id",
+        "section",
+        "record_id",
+        "request_type",
+        "status",
+        "created_at",
+      ]);
+
+    return {
+      request,
+      message:
+        "Identity details submitted for admin approval",
+    };
+  });
+}
+
+
+const IDENTITY_ENCRYPTED_COLUMNS = [
+  "aadhaar_number_encrypted",
+  "pan_number_encrypted",
+  "voter_id_number_encrypted",
+  "driving_license_number_encrypted",
+];
+
+function createIdentityApprovalError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+async function approveIdentityDetailsRequest({
+  requestId,
+  adminId,
+  remarks = null,
+}) {
+  if (!Number.isInteger(Number(requestId)) || Number(requestId) <= 0) {
+    throw createIdentityApprovalError("Invalid request ID");
+  }
+
+  return await knex.transaction(async (trx) => {
+    // Lock the approval request.
+    const request = await trx("employee_profile_change_requests")
+      .where({ id: requestId })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createIdentityApprovalError("Identity request not found");
+    }
+
+    if (request.section !== "IDENTITY") {
+      throw createIdentityApprovalError(
+        "This is not an identity details request"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createIdentityApprovalError(
+        "This identity request has already been reviewed"
+      );
+    }
+
+    const requestedData =
+      typeof request.requested_data === "string"
+        ? JSON.parse(request.requested_data)
+        : request.requested_data || {};
+
+    // Only allow the encrypted database columns.
+    const invalidFields = Object.keys(requestedData).filter(
+      (field) => !IDENTITY_ENCRYPTED_COLUMNS.includes(field)
+    );
+
+    if (invalidFields.length > 0) {
+      throw createIdentityApprovalError(
+        "Invalid encrypted identity data"
+      );
+    }
+
+    const identityData = {};
+
+    for (const column of IDENTITY_ENCRYPTED_COLUMNS) {
+      if (Object.prototype.hasOwnProperty.call(requestedData, column)) {
+        identityData[column] = requestedData[column];
+      }
+    }
+
+    let identityId = request.record_id;
+
+    if (request.request_type === "CREATE") {
+      if (request.record_id !== null) {
+        throw createIdentityApprovalError(
+          "Invalid identity CREATE request"
+        );
+      }
+
+      if (Object.keys(identityData).length === 0) {
+        throw createIdentityApprovalError(
+          "No identity details found in the request"
+        );
+      }
+
+      const existingIdentity = await trx("employee_identity_details")
+        .where({ user_id: request.user_id })
+        .first();
+
+      if (existingIdentity) {
+        throw createIdentityApprovalError(
+          "Identity details already exist for this employee"
+        );
+      }
+
+      const [createdIdentity] = await trx("employee_identity_details")
+        .insert({
+          user_id: request.user_id,
+          ...identityData,
+        })
+        .returning(["id", "user_id"]);
+
+      identityId = createdIdentity.id;
+    } else if (request.request_type === "UPDATE") {
+      if (!request.record_id) {
+        throw createIdentityApprovalError(
+          "Invalid identity UPDATE request"
+        );
+      }
+
+      const existingIdentity = await trx("employee_identity_details")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .forUpdate()
+        .first();
+
+      if (!existingIdentity) {
+        throw createIdentityApprovalError(
+          "Identity details record not found"
+        );
+      }
+
+      if (Object.keys(identityData).length === 0) {
+        throw createIdentityApprovalError(
+          "No identity details found to update"
+        );
+      }
+
+      await trx("employee_identity_details")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .update({
+          ...identityData,
+          updated_at: trx.fn.now(),
+        });
+
+    } else if (request.request_type === "DELETE") {
+      if (!request.record_id) {
+        throw createIdentityApprovalError(
+          "Invalid identity DELETE request"
+        );
+      }
+
+      const deletedCount = await trx("employee_identity_details")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .del();
+
+      if (deletedCount === 0) {
+        throw createIdentityApprovalError(
+          "Identity details record not found"
+        );
+      }
+
+      identityId = request.record_id;
+    } else {
+      throw createIdentityApprovalError(
+        "Invalid identity request type"
+      );
+    }
+
+    // Mark request as approved.
+    await trx("employee_profile_change_requests")
+      .where({ id: requestId })
+      .update({
+        status: "APPROVED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: remarks || null,
+        updated_at: trx.fn.now(),
+      });
+
+    return {
+      request_id: request.id,
+      user_id: request.user_id,
+      identity_id: identityId,
+      request_type: request.request_type,
+      status: "APPROVED",
+      message: "Identity details request approved successfully",
+    };
+  });
+}
+
+async function rejectIdentityDetailsRequest({
+  requestId,
+  adminId,
+  remarks,
+}) {
+  if (!Number.isInteger(Number(requestId)) || Number(requestId) <= 0) {
+    throw createIdentityApprovalError("Invalid request ID");
+  }
+
+  if (!remarks || !String(remarks).trim()) {
+    throw createIdentityApprovalError(
+      "Rejection remarks are required"
+    );
+  }
+
+  return await knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({ id: requestId })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      throw createIdentityApprovalError("Identity request not found");
+    }
+
+    if (request.section !== "IDENTITY") {
+      throw createIdentityApprovalError(
+        "This is not an identity details request"
+      );
+    }
+
+    if (request.status !== "PENDING") {
+      throw createIdentityApprovalError(
+        "This identity request has already been reviewed"
+      );
+    }
+
+    // Rejection does not change employee_identity_details.
+    await trx("employee_profile_change_requests")
+      .where({ id: requestId })
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: String(remarks).trim(),
+        updated_at: trx.fn.now(),
+      });
+
+    return {
+      request_id: request.id,
+      user_id: request.user_id,
+      request_type: request.request_type,
+      status: "REJECTED",
+      message: "Identity details request rejected successfully",
+    };
+  });
+}
+
+
 
 module.exports = {
   getMyEmployeeProfile,
@@ -5065,5 +6209,9 @@ module.exports = {
   updateEmployeeDesignation,
   getEmployeeDesignationHistory,
 
+  submitIdentityDetailsRequest,
+
+  approveIdentityDetailsRequest,
+  rejectIdentityDetailsRequest,
 
 };

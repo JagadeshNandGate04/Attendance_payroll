@@ -256,4 +256,22 @@ router.get(
   employeeProfileController.getEmployeeDesignationHistory
 );
 
+router.post(
+  "/me/identity-details/request",
+  userAuthorize(),
+  employeeProfileController.submitIdentityDetailsRequest
+);
+
+router.patch(
+  "/admin/requests/:id/identity/approve",
+  adminAuthorize(),
+  employeeProfileController.approveIdentityDetailsRequest
+);
+
+router.patch(
+  "/admin/requests/:id/identity/reject",
+  adminAuthorize(),
+  employeeProfileController.rejectIdentityDetailsRequest
+);
+
 module.exports = router;
