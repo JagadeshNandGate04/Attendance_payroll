@@ -763,7 +763,6 @@ async function getMyEmployeeProfile({ userId }) {
       .orderBy("from_date", "desc"),
 
     // IDENTITY DETAILS
-    // Encrypted values are decrypted internally and masked below.
     knex("employee_identity_details")
       .select(
         "id",
@@ -778,21 +777,14 @@ async function getMyEmployeeProfile({ userId }) {
       .first(),
 
     // PF / ESI DETAILS
-    // Encrypted statutory numbers are deliberately not selected.
     knex("employee_statutory_details")
       .select(
         "id",
         "is_pf_eligible",
-        knex.raw(
-          "CASE WHEN pf_account_no_encrypted IS NOT NULL AND pf_account_no_encrypted <> '' THEN TRUE ELSE FALSE END AS pf_account_no_available"
-        ),
-        knex.raw(
-          "CASE WHEN uan_no_encrypted IS NOT NULL AND uan_no_encrypted <> '' THEN TRUE ELSE FALSE END AS uan_no_available"
-        ),
+        "pf_account_no_encrypted",
+        "uan_no_encrypted",
         "is_esi_eligible",
-        knex.raw(
-          "CASE WHEN esi_no_encrypted IS NOT NULL AND esi_no_encrypted <> '' THEN TRUE ELSE FALSE END AS esi_no_available"
-        ),
+        "esi_no_encrypted",
         "created_at",
         "updated_at"
       )
@@ -800,16 +792,14 @@ async function getMyEmployeeProfile({ userId }) {
       .first(),
 
     // BANK DETAILS
-    // Account number is encrypted and deliberately not selected.
+    // Select encrypted account number internally.
     knex("employee_bank_details")
       .select(
         "id",
         "bank_name",
         "branch_name",
+        "account_number_encrypted",
         "ifsc_code",
-        knex.raw(
-          "CASE WHEN account_number_encrypted IS NOT NULL AND account_number_encrypted <> '' THEN TRUE ELSE FALSE END AS account_number_available"
-        ),
         "created_at",
         "updated_at"
       )
@@ -934,6 +924,91 @@ async function getMyEmployeeProfile({ userId }) {
     : null;
 
   // =====================================================
+  // MASK PF / ESI STATUTORY DETAILS
+  // =====================================================
+
+  const maskedStatutoryDetails = statutoryDetails
+    ? {
+        id: statutoryDetails.id,
+
+        is_pf_eligible: statutoryDetails.is_pf_eligible,
+
+        pf_account_no_available: Boolean(
+          statutoryDetails.pf_account_no_encrypted
+        ),
+
+        pf_account_no: statutoryDetails.pf_account_no_encrypted
+          ? maskIdentityValue(
+              decryptValue(
+                statutoryDetails.pf_account_no_encrypted
+              )
+            )
+          : null,
+
+        uan_no_available: Boolean(
+          statutoryDetails.uan_no_encrypted
+        ),
+
+        uan_no: statutoryDetails.uan_no_encrypted
+          ? maskIdentityValue(
+              decryptValue(
+                statutoryDetails.uan_no_encrypted
+              )
+            )
+          : null,
+
+        is_esi_eligible: statutoryDetails.is_esi_eligible,
+
+        esi_no_available: Boolean(
+          statutoryDetails.esi_no_encrypted
+        ),
+
+        esi_no: statutoryDetails.esi_no_encrypted
+          ? maskIdentityValue(
+              decryptValue(
+                statutoryDetails.esi_no_encrypted
+              )
+            )
+          : null,
+
+        created_at: statutoryDetails.created_at,
+        updated_at: statutoryDetails.updated_at,
+      }
+    : null;
+
+  // =====================================================
+  // MASK BANK DETAILS
+  // =====================================================
+
+  const maskedBankDetails = bankDetails
+    ? {
+        id: bankDetails.id,
+
+        bank_name: bankDetails.bank_name,
+
+        branch_name: bankDetails.branch_name,
+
+        account_number_available: Boolean(
+          bankDetails.account_number_encrypted
+        ),
+
+        account_number: bankDetails.account_number_encrypted
+          ? maskIdentityValue(
+              decryptValue(
+                bankDetails.account_number_encrypted
+              )
+            )
+          : null,
+
+        ifsc_code: bankDetails.ifsc_code,
+
+        created_at: bankDetails.created_at,
+
+        updated_at: bankDetails.updated_at,
+      }
+    : null;
+
+  // =====================================================
   // PREPARE EMPLOYEE RESPONSE
   // =====================================================
 
@@ -947,7 +1022,6 @@ async function getMyEmployeeProfile({ userId }) {
 
   // =====================================================
   // CURRENT COMPANY EXPERIENCE
-  // Calculated from original date of joining.
   // =====================================================
 
   employeeData.current_company_experience =
@@ -957,8 +1031,6 @@ async function getMyEmployeeProfile({ userId }) {
 
   // =====================================================
   // CURRENT DESIGNATION EXPERIENCE
-  // Calculated from latest effective designation date.
-  // If no history exists, use date of joining.
   // =====================================================
 
   const designationStartDate =
@@ -1026,9 +1098,9 @@ async function getMyEmployeeProfile({ userId }) {
 
       identity_details: maskedIdentityDetails,
 
-      statutory_details: statutoryDetails || null,
+      statutory_details: maskedStatutoryDetails,
 
-      bank_details: bankDetails || null,
+      bank_details: maskedBankDetails,
 
       documents,
 
@@ -1044,7 +1116,6 @@ async function getMyEmployeeProfile({ userId }) {
     },
   };
 }
-
 
 
 // Private storage outside the public uploads directory
@@ -5936,6 +6007,8 @@ function createIdentityApprovalError(message) {
   return error;
 }
 
+// APPROVE IDENTITY REQUEST BY ADMIN
+
 async function approveIdentityDetailsRequest({
   requestId,
   adminId,
@@ -6111,6 +6184,9 @@ async function approveIdentityDetailsRequest({
   });
 }
 
+
+// REQUEST IDENTITY REQUEST BY ADMIN
+
 async function rejectIdentityDetailsRequest({
   requestId,
   adminId,
@@ -6171,6 +6247,1262 @@ async function rejectIdentityDetailsRequest({
 
 
 
+// =====================================================
+// SUBMIT EMPLOYEE PF / ESI DETAILS REQUEST
+// =====================================================
+
+async function submitStatutoryDetailsRequest({
+  userId,
+  statutoryData,
+}) {
+  if (
+    !userId ||
+    !Number.isInteger(Number(userId)) ||
+    Number(userId) <= 0
+  ) {
+    const error = new Error("Invalid employee ID");
+    error.code = "INVALID_EMPLOYEE_ID";
+    throw error;
+  }
+
+  if (
+    !statutoryData ||
+    typeof statutoryData !== "object" ||
+    Array.isArray(statutoryData)
+  ) {
+    const error = new Error("Invalid statutory details");
+    error.code = "INVALID_STATUTORY_DATA";
+    throw error;
+  }
+
+  const normalizedUserId = Number(userId);
+
+  const {
+    request_type,
+    id,
+    is_pf_eligible,
+    pf_account_no,
+    uan_no,
+    is_esi_eligible,
+    esi_no,
+  } = statutoryData;
+
+  const requestType = String(request_type || "")
+    .trim()
+    .toUpperCase();
+
+  if (!["CREATE", "UPDATE", "DELETE"].includes(requestType)) {
+    const error = new Error(
+      "Request type must be CREATE, UPDATE or DELETE"
+    );
+    error.code = "INVALID_REQUEST_TYPE";
+    throw error;
+  }
+
+  const allowedFields = [
+    "request_type",
+    "id",
+    "is_pf_eligible",
+    "pf_account_no",
+    "uan_no",
+    "is_esi_eligible",
+    "esi_no",
+  ];
+
+  const unexpectedFields = Object.keys(statutoryData).filter(
+    (field) => !allowedFields.includes(field)
+  );
+
+  if (unexpectedFields.length > 0) {
+    const error = new Error(
+      `Unexpected fields: ${unexpectedFields.join(", ")}`
+    );
+    error.code = "INVALID_STATUTORY_DATA";
+    throw error;
+  }
+
+  if (
+    requestType === "UPDATE" ||
+    requestType === "DELETE"
+  ) {
+    if (!id || !Number.isInteger(Number(id)) || Number(id) <= 0) {
+      const error = new Error("Valid statutory record ID is required");
+      error.code = "INVALID_RECORD_ID";
+      throw error;
+    }
+  }
+
+  if (requestType === "DELETE") {
+    if (Object.keys(statutoryData).some(
+      (field) => field !== "request_type" && field !== "id"
+    )) {
+      const error = new Error(
+        "DELETE request should contain only request_type and id"
+      );
+      error.code = "INVALID_STATUTORY_DATA";
+      throw error;
+    }
+  }
+
+  const normalizeBoolean = (value, fieldName) => {
+    if (typeof value !== "boolean") {
+      const error = new Error(`${fieldName} must be true or false`);
+      error.code = "INVALID_STATUTORY_DATA";
+      throw error;
+    }
+
+    return value;
+  };
+
+  const normalizeNumber = (value, fieldName) => {
+    if (value === undefined || value === null || value === "") {
+      return null;
+    }
+
+    if (typeof value !== "string" && typeof value !== "number") {
+      const error = new Error(`${fieldName} must be a string`);
+      error.code = "INVALID_STATUTORY_DATA";
+      throw error;
+    }
+
+    const normalized = String(value).trim().replace(/\s+/g, "");
+
+    if (
+      normalized.length < 3 ||
+      normalized.length > 30 ||
+      !/^[A-Za-z0-9/-]+$/.test(normalized)
+    ) {
+      const error = new Error(`Invalid ${fieldName} format`);
+      error.code = "INVALID_STATUTORY_DATA";
+      throw error;
+    }
+
+    return normalized.toUpperCase();
+  };
+
+  const submittedData = {};
+
+  if (requestType !== "DELETE") {
+    const suppliedFields = Object.keys(statutoryData).filter(
+      (field) => field !== "request_type" && field !== "id"
+    );
+
+    if (requestType === "CREATE") {
+      if (
+        typeof is_pf_eligible !== "boolean" ||
+        typeof is_esi_eligible !== "boolean"
+      ) {
+        const error = new Error(
+          "PF and ESI eligibility must be provided as true or false"
+        );
+        error.code = "INVALID_STATUTORY_DATA";
+        throw error;
+      }
+    }
+
+    if (suppliedFields.includes("is_pf_eligible")) {
+      submittedData.is_pf_eligible = normalizeBoolean(
+        is_pf_eligible,
+        "is_pf_eligible"
+      );
+    }
+
+    if (suppliedFields.includes("is_esi_eligible")) {
+      submittedData.is_esi_eligible = normalizeBoolean(
+        is_esi_eligible,
+        "is_esi_eligible"
+      );
+    }
+
+    if (suppliedFields.includes("pf_account_no")) {
+      submittedData.pf_account_no_encrypted = encryptValue(
+        normalizeNumber(pf_account_no, "PF account number")
+      );
+    }
+
+    if (suppliedFields.includes("uan_no")) {
+      submittedData.uan_no_encrypted = encryptValue(
+        normalizeNumber(uan_no, "UAN number")
+      );
+    }
+
+    if (suppliedFields.includes("esi_no")) {
+      submittedData.esi_no_encrypted = encryptValue(
+        normalizeNumber(esi_no, "ESI number")
+      );
+    }
+
+    if (
+      requestType === "CREATE" &&
+      submittedData.is_pf_eligible === false &&
+      (submittedData.pf_account_no_encrypted ||
+        submittedData.uan_no_encrypted)
+    ) {
+      const error = new Error(
+        "PF account number and UAN cannot be provided when PF is not applicable"
+      );
+      error.code = "INVALID_STATUTORY_DATA";
+      throw error;
+    }
+
+    if (
+      requestType === "CREATE" &&
+      submittedData.is_esi_eligible === false &&
+      submittedData.esi_no_encrypted
+    ) {
+      const error = new Error(
+        "ESI number cannot be provided when ESI is not applicable"
+      );
+      error.code = "INVALID_STATUTORY_DATA";
+      throw error;
+    }
+
+    if (requestType === "CREATE") {
+      if (
+        submittedData.is_pf_eligible === true &&
+        !submittedData.pf_account_no_encrypted &&
+        !submittedData.uan_no_encrypted
+      ) {
+        const error = new Error(
+          "Provide a PF account number or UAN when PF is applicable"
+        );
+        error.code = "INVALID_STATUTORY_DATA";
+        throw error;
+      }
+
+      if (
+        submittedData.is_esi_eligible === true &&
+        !submittedData.esi_no_encrypted
+      ) {
+        const error = new Error(
+          "ESI number is required when ESI is applicable"
+        );
+        error.code = "INVALID_STATUTORY_DATA";
+        throw error;
+      }
+    }
+
+    if (Object.keys(submittedData).length === 0) {
+      const error = new Error("No statutory details provided");
+      error.code = "INVALID_STATUTORY_DATA";
+      throw error;
+    }
+  }
+
+  return await knex.transaction(async (trx) => {
+    const user = await trx("users")
+      .select("id", "role")
+      .where({ id: normalizedUserId })
+      .forUpdate()
+      .first();
+
+    if (
+      !user ||
+      String(user.role).toUpperCase() !== "EMPLOYEE"
+    ) {
+      const error = new Error("Employee not found");
+      error.code = "EMPLOYEE_NOT_FOUND";
+      throw error;
+    }
+
+    const existingRecord = await trx("employee_statutory_details")
+      .where({ user_id: normalizedUserId })
+      .first();
+
+    if (requestType === "CREATE" && existingRecord) {
+      const error = new Error(
+        "Statutory details already exist. Use UPDATE instead."
+      );
+      error.code = "STATUTORY_DETAILS_ALREADY_EXISTS";
+      throw error;
+    }
+
+    if (requestType === "UPDATE" || requestType === "DELETE") {
+      if (
+        !existingRecord ||
+        String(existingRecord.id) !== String(id)
+      ) {
+        const error = new Error("Statutory record not found");
+        error.code = "STATUTORY_RECORD_NOT_FOUND";
+        throw error;
+      }
+    }
+
+    if (requestType === "UPDATE") {
+      const existingPfEligible =
+        existingRecord.is_pf_eligible;
+
+      const existingEsiEligible =
+        existingRecord.is_esi_eligible;
+
+      const nextPfEligible =
+        submittedData.is_pf_eligible !== undefined
+          ? submittedData.is_pf_eligible
+          : existingPfEligible;
+
+      const nextEsiEligible =
+        submittedData.is_esi_eligible !== undefined
+          ? submittedData.is_esi_eligible
+          : existingEsiEligible;
+
+      const nextPfNumber =
+        submittedData.pf_account_no_encrypted !== undefined
+          ? submittedData.pf_account_no_encrypted
+          : existingRecord.pf_account_no_encrypted;
+
+      const nextUan =
+        submittedData.uan_no_encrypted !== undefined
+          ? submittedData.uan_no_encrypted
+          : existingRecord.uan_no_encrypted;
+
+      const nextEsiNumber =
+        submittedData.esi_no_encrypted !== undefined
+          ? submittedData.esi_no_encrypted
+          : existingRecord.esi_no_encrypted;
+
+      if (
+        nextPfEligible === false &&
+        (nextPfNumber || nextUan)
+      ) {
+        const error = new Error(
+          "Remove PF account number and UAN when PF is not applicable"
+        );
+        error.code = "INVALID_STATUTORY_DATA";
+        throw error;
+      }
+
+      if (
+        nextEsiEligible === false &&
+        nextEsiNumber
+      ) {
+        const error = new Error(
+          "Remove ESI number when ESI is not applicable"
+        );
+        error.code = "INVALID_STATUTORY_DATA";
+        throw error;
+      }
+
+      if (
+        nextPfEligible === true &&
+        !nextPfNumber &&
+        !nextUan
+      ) {
+        const error = new Error(
+          "Provide a PF account number or UAN when PF is applicable"
+        );
+        error.code = "INVALID_STATUTORY_DATA";
+        throw error;
+      }
+
+      if (nextEsiEligible === true && !nextEsiNumber) {
+        const error = new Error(
+          "ESI number is required when ESI is applicable"
+        );
+        error.code = "INVALID_STATUTORY_DATA";
+        throw error;
+      }
+    }
+
+    const pendingRequest = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({
+        user_id: normalizedUserId,
+        section: "STATUTORY",
+        status: "PENDING",
+      })
+      .first();
+
+    if (pendingRequest) {
+      const error = new Error(
+        "A statutory details request is already pending"
+      );
+      error.code = "PENDING_REQUEST_EXISTS";
+      throw error;
+    }
+
+    const existingData =
+      requestType === "CREATE"
+        ? {}
+        : {
+            is_pf_eligible: existingRecord.is_pf_eligible,
+            pf_account_no_encrypted:
+              existingRecord.pf_account_no_encrypted,
+            uan_no_encrypted:
+              existingRecord.uan_no_encrypted,
+            is_esi_eligible: existingRecord.is_esi_eligible,
+            esi_no_encrypted:
+              existingRecord.esi_no_encrypted,
+          };
+
+    const [request] = await trx(
+      "employee_profile_change_requests"
+    )
+      .insert({
+        user_id: normalizedUserId,
+        section: "STATUTORY",
+        record_id:
+          requestType === "CREATE" ? null : existingRecord.id,
+        request_type: requestType,
+        existing_data: JSON.stringify(existingData),
+        requested_data: JSON.stringify(submittedData),
+        status: "PENDING",
+      })
+      .returning([
+        "id",
+        "user_id",
+        "section",
+        "record_id",
+        "request_type",
+        "status",
+        "created_at",
+      ]);
+
+    return {
+      success: true,
+      message: "Statutory details request submitted successfully",
+      data: {
+        request_id: request.id,
+        user_id: request.user_id,
+        record_id: request.record_id,
+        request_type: request.request_type,
+        status: request.status,
+        created_at: request.created_at,
+      },
+    };
+  });
+}
+
+// APPROVE STATUTORY DETAILS REQUEST
+
+
+async function approveStatutoryDetailsRequest({
+  requestId,
+  adminId,
+  remarks = null,
+}) {
+  if (
+    !requestId ||
+    !Number.isInteger(Number(requestId)) ||
+    Number(requestId) <= 0
+  ) {
+    const error = new Error("Invalid request ID");
+    error.code = "INVALID_REQUEST_ID";
+    throw error;
+  }
+
+  return await knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: Number(requestId),
+        section: "STATUTORY",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      const error = new Error("Statutory request not found");
+      error.code = "STATUTORY_REQUEST_NOT_FOUND";
+      throw error;
+    }
+
+    if (request.status !== "PENDING") {
+      const error = new Error("Request is not pending");
+      error.code = "REQUEST_NOT_PENDING";
+      throw error;
+    }
+
+    const requestedData =
+      typeof request.requested_data === "string"
+        ? JSON.parse(request.requested_data)
+        : request.requested_data;
+
+    if (
+      !requestedData ||
+      typeof requestedData !== "object" ||
+      Array.isArray(requestedData)
+    ) {
+      const error = new Error("Invalid statutory request data");
+      error.code = "INVALID_STATUTORY_DATA";
+      throw error;
+    }
+
+    const columnMap = {
+      is_pf_eligible: "is_pf_eligible",
+      pf_account_no_encrypted: "pf_account_no_encrypted",
+      uan_no_encrypted: "uan_no_encrypted",
+      is_esi_eligible: "is_esi_eligible",
+      esi_no_encrypted: "esi_no_encrypted",
+    };
+
+    const allowedColumns = Object.keys(columnMap);
+
+    for (const field of Object.keys(requestedData)) {
+      if (!allowedColumns.includes(field)) {
+        const error = new Error(
+          `Invalid statutory field: ${field}`
+        );
+        error.code = "INVALID_STATUTORY_DATA";
+        throw error;
+      }
+    }
+
+    const user = await trx("users")
+      .select("id", "role")
+      .where({ id: request.user_id })
+      .first();
+
+    if (
+      !user ||
+      String(user.role).toUpperCase() !== "EMPLOYEE"
+    ) {
+      const error = new Error("Employee not found");
+      error.code = "EMPLOYEE_NOT_FOUND";
+      throw error;
+    }
+
+    const existingRecord = await trx("employee_statutory_details")
+      .where({ user_id: request.user_id })
+      .forUpdate()
+      .first();
+
+    if (request.request_type === "CREATE") {
+      if (existingRecord) {
+        const error = new Error(
+          "Statutory details already exist"
+        );
+        error.code = "STATUTORY_DETAILS_ALREADY_EXISTS";
+        throw error;
+      }
+
+      await trx("employee_statutory_details").insert({
+        user_id: request.user_id,
+        ...requestedData,
+        created_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
+      });
+    } else if (request.request_type === "UPDATE") {
+      if (
+        !existingRecord ||
+        String(existingRecord.id) !== String(request.record_id)
+      ) {
+        const error = new Error("Statutory record not found");
+        error.code = "STATUTORY_RECORD_NOT_FOUND";
+        throw error;
+      }
+
+      await trx("employee_statutory_details")
+        .where({
+          id: existingRecord.id,
+          user_id: request.user_id,
+        })
+        .update({
+          ...requestedData,
+          updated_at: trx.fn.now(),
+        });
+    } else if (request.request_type === "DELETE") {
+      if (
+        !existingRecord ||
+        String(existingRecord.id) !== String(request.record_id)
+      ) {
+        const error = new Error("Statutory record not found");
+        error.code = "STATUTORY_RECORD_NOT_FOUND";
+        throw error;
+      }
+
+      await trx("employee_statutory_details")
+        .where({
+          id: existingRecord.id,
+          user_id: request.user_id,
+        })
+        .del();
+    } else {
+      const error = new Error("Invalid request type");
+      error.code = "INVALID_REQUEST_TYPE";
+      throw error;
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: request.id })
+      .update({
+        status: "APPROVED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: remarks,
+        updated_at: trx.fn.now(),
+      })
+      .returning(["id", "status", "reviewed_by", "reviewed_at"]);
+
+    return {
+      success: true,
+      message: "Statutory details request approved successfully",
+      data: {
+        request_id: updatedRequest.id,
+        user_id: request.user_id,
+        request_type: request.request_type,
+        status: updatedRequest.status,
+        reviewed_by: updatedRequest.reviewed_by,
+        reviewed_at: updatedRequest.reviewed_at,
+      },
+    };
+  });
+}
+
+// REJECT STATUTORY DETAILS REQUEST
+
+
+async function rejectStatutoryDetailsRequest({
+  requestId,
+  adminId,
+  remarks,
+}) {
+  if (
+    !requestId ||
+    !Number.isInteger(Number(requestId)) ||
+    Number(requestId) <= 0
+  ) {
+    const error = new Error("Invalid request ID");
+    error.code = "INVALID_REQUEST_ID";
+    throw error;
+  }
+
+  if (
+    !remarks ||
+    typeof remarks !== "string" ||
+    !remarks.trim()
+  ) {
+    const error = new Error("Rejection remarks are required");
+    error.code = "REMARKS_REQUIRED";
+    throw error;
+  }
+
+  return await knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: Number(requestId),
+        section: "STATUTORY",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      const error = new Error("Statutory request not found");
+      error.code = "STATUTORY_REQUEST_NOT_FOUND";
+      throw error;
+    }
+
+    if (request.status !== "PENDING") {
+      const error = new Error("Request is not pending");
+      error.code = "REQUEST_NOT_PENDING";
+      throw error;
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: request.id })
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: remarks.trim(),
+        updated_at: trx.fn.now(),
+      })
+      .returning(["id", "status", "reviewed_by", "reviewed_at"]);
+
+    return {
+      success: true,
+      message: "Statutory details request rejected successfully",
+      data: {
+        request_id: updatedRequest.id,
+        user_id: request.user_id,
+        request_type: request.request_type,
+        status: updatedRequest.status,
+        reviewed_by: updatedRequest.reviewed_by,
+        reviewed_at: updatedRequest.reviewed_at,
+        approval_remarks: remarks.trim(),
+      },
+    };
+  });
+}
+
+
+
+// =====================================================
+// SUBMIT BANK DETAILS REQUEST
+// =====================================================
+
+async function submitBankDetailsRequest({
+  userId,
+  bankData,
+}) {
+  const normalizedUserId = Number(userId);
+
+  if (
+    !normalizedUserId ||
+    !Number.isInteger(normalizedUserId) ||
+    normalizedUserId <= 0
+  ) {
+    const error = new Error("Invalid employee ID");
+    error.code = "INVALID_EMPLOYEE_ID";
+    throw error;
+  }
+
+  if (!bankData || typeof bankData !== "object" || Array.isArray(bankData)) {
+    const error = new Error("Invalid bank details data");
+    error.code = "INVALID_BANK_DATA";
+    throw error;
+  }
+
+  const allowedFields = [
+    "request_type",
+    "id",
+    "bank_name",
+    "branch_name",
+    "account_number",
+    "ifsc_code",
+  ];
+
+  const unexpectedFields = Object.keys(bankData).filter(
+    (field) => !allowedFields.includes(field)
+  );
+
+  if (unexpectedFields.length > 0) {
+    const error = new Error(
+      `Unexpected fields: ${unexpectedFields.join(", ")}`
+    );
+    error.code = "INVALID_BANK_DATA";
+    throw error;
+  }
+
+  const requestType = String(
+    bankData.request_type || ""
+  ).toUpperCase();
+
+  if (!["CREATE", "UPDATE", "DELETE"].includes(requestType)) {
+    const error = new Error(
+      "request_type must be CREATE, UPDATE or DELETE"
+    );
+    error.code = "INVALID_REQUEST_TYPE";
+    throw error;
+  }
+
+  const allowedRequestFields = {
+    CREATE: [
+      "request_type",
+      "bank_name",
+      "branch_name",
+      "account_number",
+      "ifsc_code",
+    ],
+    UPDATE: [
+      "request_type",
+      "id",
+      "bank_name",
+      "branch_name",
+      "account_number",
+      "ifsc_code",
+    ],
+    DELETE: ["request_type", "id"],
+  };
+
+  const unexpectedRequestFields = Object.keys(bankData).filter(
+    (field) => !allowedRequestFields[requestType].includes(field)
+  );
+
+  if (unexpectedRequestFields.length > 0) {
+    const error = new Error(
+      `Fields not allowed for ${requestType}: ${unexpectedRequestFields.join(", ")}`
+    );
+    error.code = "INVALID_BANK_DATA";
+    throw error;
+  }
+
+  if (
+    requestType === "CREATE" &&
+    !["bank_name", "branch_name", "account_number", "ifsc_code"].some(
+      (field) => bankData[field] !== undefined &&
+        bankData[field] !== null &&
+        String(bankData[field]).trim() !== ""
+    )
+  ) {
+    const error = new Error("At least one bank detail is required");
+    error.code = "INVALID_BANK_DATA";
+    throw error;
+  }
+
+  if (
+    requestType === "UPDATE" &&
+    (
+      !bankData.id ||
+      !Number.isInteger(Number(bankData.id)) ||
+      Number(bankData.id) <= 0
+    )
+  ) {
+    const error = new Error("Valid bank details ID is required");
+    error.code = "INVALID_RECORD_ID";
+    throw error;
+  }
+
+  const normalizeText = (value, field, maxLength) => {
+    if (value === undefined) return undefined;
+    if (value === null || String(value).trim() === "") return null;
+
+    const normalized = String(value).trim();
+
+    if (normalized.length > maxLength) {
+      const error = new Error(
+        `${field} cannot exceed ${maxLength} characters`
+      );
+      error.code = "INVALID_BANK_DATA";
+      throw error;
+    }
+
+    return normalized;
+  };
+
+  const normalizeAccountNumber = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || String(value).trim() === "") return null;
+
+    const normalized = String(value).replace(/\s+/g, "");
+
+    if (!/^[0-9]{6,30}$/.test(normalized)) {
+      const error = new Error(
+        "Account number must contain 6 to 30 digits"
+      );
+      error.code = "INVALID_ACCOUNT_NUMBER";
+      throw error;
+    }
+
+    return normalized;
+  };
+
+  const normalizeIfsc = (value) => {
+    if (value === undefined) return undefined;
+    if (value === null || String(value).trim() === "") return null;
+
+    const normalized = String(value).trim().toUpperCase();
+
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(normalized)) {
+      const error = new Error("Invalid IFSC code");
+      error.code = "INVALID_IFSC_CODE";
+      throw error;
+    }
+
+    return normalized;
+  };
+
+  const requestedData = {};
+
+  if (requestType !== "DELETE") {
+    const bankName = normalizeText(
+      bankData.bank_name,
+      "Bank name",
+      150
+    );
+
+    const branchName = normalizeText(
+      bankData.branch_name,
+      "Branch name",
+      150
+    );
+
+    const accountNumber = normalizeAccountNumber(
+      bankData.account_number
+    );
+
+    const ifscCode = normalizeIfsc(bankData.ifsc_code);
+
+    if (bankName !== undefined) {
+      requestedData.bank_name = bankName;
+    }
+
+    if (branchName !== undefined) {
+      requestedData.branch_name = branchName;
+    }
+
+    if (accountNumber !== undefined) {
+      requestedData.account_number_encrypted =
+        accountNumber ? encryptValue(accountNumber) : null;
+    }
+
+    if (ifscCode !== undefined) {
+      requestedData.ifsc_code = ifscCode;
+    }
+  }
+
+  return knex.transaction(async (trx) => {
+    const user = await trx("users")
+      .select("id", "role")
+      .where({ id: normalizedUserId })
+      .forUpdate()
+      .first();
+
+    if (!user) {
+      const error = new Error("Employee not found");
+      error.code = "EMPLOYEE_NOT_FOUND";
+      throw error;
+    }
+
+    if (String(user.role).toUpperCase() !== "EMPLOYEE") {
+      const error = new Error("Only employees can submit bank details");
+      error.code = "INVALID_EMPLOYEE";
+      throw error;
+    }
+
+    const pendingRequest = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({
+        user_id: normalizedUserId,
+        section: "BANK",
+        status: "PENDING",
+      })
+      .first();
+
+    if (pendingRequest) {
+      const error = new Error(
+        "A bank details request is already pending"
+      );
+      error.code = "PENDING_REQUEST_EXISTS";
+      throw error;
+    }
+
+    let existingRecord = null;
+
+    if (requestType === "CREATE") {
+      existingRecord = await trx("employee_bank_details")
+        .where({ user_id: normalizedUserId })
+        .first();
+
+      if (existingRecord) {
+        const error = new Error(
+          "Bank details already exist. Use UPDATE instead."
+        );
+        error.code = "BANK_DETAILS_ALREADY_EXISTS";
+        throw error;
+      }
+    }
+
+    if (requestType === "UPDATE" || requestType === "DELETE") {
+      existingRecord = await trx("employee_bank_details")
+        .where({
+          id: bankData.id,
+          user_id: normalizedUserId,
+        })
+        .forUpdate()
+        .first();
+
+      if (!existingRecord) {
+        const error = new Error("Bank details record not found");
+        error.code = "BANK_DETAILS_NOT_FOUND";
+        throw error;
+      }
+    }
+
+    if (
+      requestType === "UPDATE" &&
+      Object.keys(requestedData).length === 0
+    ) {
+      const error = new Error("Provide at least one field to update");
+      error.code = "EMPTY_UPDATE";
+      throw error;
+    }
+
+    const existingData = existingRecord
+      ? {
+          bank_name: existingRecord.bank_name,
+          branch_name: existingRecord.branch_name,
+          account_number_encrypted:
+            existingRecord.account_number_encrypted,
+          ifsc_code: existingRecord.ifsc_code,
+        }
+      : {};
+
+    const [request] = await trx(
+      "employee_profile_change_requests"
+    )
+      .insert({
+        user_id: normalizedUserId,
+        section: "BANK",
+        record_id: existingRecord ? existingRecord.id : null,
+        request_type: requestType,
+        existing_data: JSON.stringify(existingData),
+        requested_data: JSON.stringify(requestedData),
+        status: "PENDING",
+      })
+      .returning([
+        "id",
+        "user_id",
+        "record_id",
+        "request_type",
+        "status",
+        "created_at",
+      ]);
+
+    return {
+      success: true,
+      message: "Bank details request submitted successfully",
+      data: {
+        request_id: request.id,
+        user_id: request.user_id,
+        record_id: request.record_id,
+        request_type: request.request_type,
+        status: request.status,
+        created_at: request.created_at,
+      },
+    };
+  });
+}
+
+// APPROVE BANK DETAILS REQUEST
+
+async function approveBankDetailsRequest({
+  requestId,
+  adminId,
+  remarks = null,
+}) {
+  return knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: requestId,
+        section: "BANK",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      const error = new Error("Bank details request not found");
+      error.code = "REQUEST_NOT_FOUND";
+      throw error;
+    }
+
+    if (request.status !== "PENDING") {
+      const error = new Error("Request has already been reviewed");
+      error.code = "REQUEST_ALREADY_REVIEWED";
+      throw error;
+    }
+
+    const user = await trx("users")
+      .select("id", "role")
+      .where({ id: request.user_id })
+      .first();
+
+    if (!user || String(user.role).toUpperCase() !== "EMPLOYEE") {
+      const error = new Error("Employee not found");
+      error.code = "EMPLOYEE_NOT_FOUND";
+      throw error;
+    }
+
+    const requestedData =
+      typeof request.requested_data === "string"
+        ? JSON.parse(request.requested_data)
+        : request.requested_data || {};
+
+    const allowedFields = [
+      "bank_name",
+      "branch_name",
+      "account_number_encrypted",
+      "ifsc_code",
+    ];
+
+    if (
+      !requestedData ||
+      typeof requestedData !== "object" ||
+      Array.isArray(requestedData) ||
+      Object.keys(requestedData).some(
+        (field) => !allowedFields.includes(field)
+      )
+    ) {
+      const error = new Error("Invalid bank details request data");
+      error.code = "INVALID_REQUEST_DATA";
+      throw error;
+    }
+
+    let bankRecord;
+
+    if (request.request_type === "CREATE") {
+      const existing = await trx("employee_bank_details")
+        .where({ user_id: request.user_id })
+        .first();
+
+      if (existing) {
+        const error = new Error("Bank details already exist");
+        error.code = "BANK_DETAILS_ALREADY_EXISTS";
+        throw error;
+      }
+
+      [bankRecord] = await trx("employee_bank_details")
+        .insert({
+          user_id: request.user_id,
+          bank_name: requestedData.bank_name ?? null,
+          branch_name: requestedData.branch_name ?? null,
+          account_number_encrypted:
+            requestedData.account_number_encrypted ?? null,
+          ifsc_code: requestedData.ifsc_code ?? null,
+        })
+        .returning(["id"]);
+    } else if (request.request_type === "UPDATE") {
+      const existing = await trx("employee_bank_details")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .forUpdate()
+        .first();
+
+      if (!existing) {
+        const error = new Error("Bank details record not found");
+        error.code = "BANK_DETAILS_NOT_FOUND";
+        throw error;
+      }
+
+      if (Object.keys(requestedData).length === 0) {
+        const error = new Error("No bank details to update");
+        error.code = "INVALID_REQUEST_DATA";
+        throw error;
+      }
+
+      [bankRecord] = await trx("employee_bank_details")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .update({
+          ...requestedData,
+          updated_at: trx.fn.now(),
+        })
+        .returning(["id"]);
+    } else if (request.request_type === "DELETE") {
+      const deleted = await trx("employee_bank_details")
+        .where({
+          id: request.record_id,
+          user_id: request.user_id,
+        })
+        .delete();
+
+      if (!deleted) {
+        const error = new Error("Bank details record not found");
+        error.code = "BANK_DETAILS_NOT_FOUND";
+        throw error;
+      }
+    } else {
+      const error = new Error("Invalid request type");
+      error.code = "INVALID_REQUEST_TYPE";
+      throw error;
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: request.id })
+      .update({
+        status: "APPROVED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: remarks,
+        updated_at: trx.fn.now(),
+      })
+      .returning([
+        "id",
+        "user_id",
+        "request_type",
+        "status",
+        "reviewed_by",
+        "reviewed_at",
+      ]);
+
+    return {
+      success: true,
+      message: "Bank details request approved successfully",
+      data: {
+        request_id: updatedRequest.id,
+        user_id: updatedRequest.user_id,
+        request_type: updatedRequest.request_type,
+        status: updatedRequest.status,
+        reviewed_by: updatedRequest.reviewed_by,
+        reviewed_at: updatedRequest.reviewed_at,
+        bank_details_id: bankRecord?.id || request.record_id || null,
+      },
+    };
+  });
+}
+
+// REJECT BANK DETAILS REQUEST
+
+async function rejectBankDetailsRequest({
+  requestId,
+  adminId,
+  remarks,
+}) {
+  if (!remarks || !String(remarks).trim()) {
+    const error = new Error("Rejection remarks are required");
+    error.code = "REMARKS_REQUIRED";
+    throw error;
+  }
+
+  return knex.transaction(async (trx) => {
+    const request = await trx("employee_profile_change_requests")
+      .where({
+        id: requestId,
+        section: "BANK",
+      })
+      .forUpdate()
+      .first();
+
+    if (!request) {
+      const error = new Error("Bank details request not found");
+      error.code = "REQUEST_NOT_FOUND";
+      throw error;
+    }
+
+    if (request.status !== "PENDING") {
+      const error = new Error("Request has already been reviewed");
+      error.code = "REQUEST_ALREADY_REVIEWED";
+      throw error;
+    }
+
+    const [updatedRequest] = await trx(
+      "employee_profile_change_requests"
+    )
+      .where({ id: requestId })
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: trx.fn.now(),
+        approval_remarks: String(remarks).trim(),
+        updated_at: trx.fn.now(),
+      })
+      .returning([
+        "id",
+        "user_id",
+        "request_type",
+        "status",
+        "reviewed_by",
+        "reviewed_at",
+        "approval_remarks",
+      ]);
+
+    return {
+      success: true,
+      message: "Bank details request rejected successfully",
+      data: {
+        request_id: updatedRequest.id,
+        user_id: updatedRequest.user_id,
+        request_type: updatedRequest.request_type,
+        status: updatedRequest.status,
+        reviewed_by: updatedRequest.reviewed_by,
+        reviewed_at: updatedRequest.reviewed_at,
+        approval_remarks: updatedRequest.approval_remarks,
+      },
+    };
+  });
+}
+
+
 module.exports = {
   getMyEmployeeProfile,
   uploadMyProfilePicture,
@@ -6213,5 +7545,13 @@ module.exports = {
 
   approveIdentityDetailsRequest,
   rejectIdentityDetailsRequest,
+
+  submitStatutoryDetailsRequest,
+  approveStatutoryDetailsRequest,
+  rejectStatutoryDetailsRequest,
+
+  submitBankDetailsRequest,
+  approveBankDetailsRequest,
+  rejectBankDetailsRequest,
 
 };

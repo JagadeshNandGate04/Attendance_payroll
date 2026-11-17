@@ -1490,6 +1490,191 @@ async function rejectIdentityDetailsRequest(req, res) {
 }
 
 
+// =====================================================
+// SUBMIT PF / ESI STATUTORY DETAILS REQUEST
+// =====================================================
+
+async function submitStatutoryDetailsRequest(req, res) {
+  try {
+    const result =
+      await employeeProfileService.submitStatutoryDetailsRequest({
+        userId: req.user.id,
+        statutoryData: req.body,
+      });
+
+    return res.status(201).json(result);
+  } catch (error) {
+    console.error("Submit statutory details request error:", error);
+
+    const errorMap = {
+      INVALID_EMPLOYEE_ID: 400,
+      INVALID_STATUTORY_DATA: 400,
+      INVALID_REQUEST_TYPE: 400,
+      INVALID_RECORD_ID: 400,
+      EMPLOYEE_NOT_FOUND: 404,
+      STATUTORY_DETAILS_ALREADY_EXISTS: 400,
+      STATUTORY_RECORD_NOT_FOUND: 404,
+      PENDING_REQUEST_EXISTS: 400,
+    };
+
+    return res.status(errorMap[error.code] || 400).json({
+      success: false,
+      error: error.code || "SUBMIT_STATUTORY_DETAILS_FAILED",
+      message: error.message || "Unable to submit statutory details request",
+      data: null,
+    });
+  }
+}
+
+// APPROVE STATUTORY REQUEST BY ADMIN
+
+
+async function approveStatutoryDetailsRequest(req, res) {
+  try {
+    const result =
+      await employeeProfileService.approveStatutoryDetailsRequest({
+        requestId: req.params.id,
+        adminId: req.user.id,
+        remarks: req.body.remarks || null,
+      });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Approve statutory details error:", error);
+
+    const errorMap = {
+      INVALID_REQUEST_ID: 400,
+      STATUTORY_REQUEST_NOT_FOUND: 404,
+      REQUEST_NOT_PENDING: 400,
+      INVALID_STATUTORY_DATA: 400,
+      EMPLOYEE_NOT_FOUND: 404,
+      STATUTORY_DETAILS_ALREADY_EXISTS: 400,
+      STATUTORY_RECORD_NOT_FOUND: 404,
+      INVALID_REQUEST_TYPE: 400,
+    };
+
+    return res.status(errorMap[error.code] || 400).json({
+      success: false,
+      error: error.code || "APPROVE_STATUTORY_DETAILS_FAILED",
+      message: error.message || "Unable to approve statutory details request",
+      data: null,
+    });
+  }
+}
+
+// REJECT STATUTORY DETAILS REQUEST:
+
+async function rejectStatutoryDetailsRequest(req, res) {
+  try {
+    const result =
+      await employeeProfileService.rejectStatutoryDetailsRequest({
+        requestId: req.params.id,
+        adminId: req.user.id,
+        remarks: req.body.remarks,
+      });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Reject statutory details error:", error);
+
+    const errorMap = {
+      INVALID_REQUEST_ID: 400,
+      STATUTORY_REQUEST_NOT_FOUND: 404,
+      REQUEST_NOT_PENDING: 400,
+      REMARKS_REQUIRED: 400,
+    };
+
+    return res.status(errorMap[error.code] || 400).json({
+      success: false,
+      error: error.code || "REJECT_STATUTORY_DETAILS_FAILED",
+      message: error.message || "Unable to reject statutory details request",
+      data: null,
+    });
+  }
+}
+
+// SUBMIT BANK DETAILS REQUEST:
+
+async function submitBankDetailsRequest(req, res) {
+  try {
+    const result = await employeeProfileService.submitBankDetailsRequest({
+      userId: req.user.id,
+      bankData: req.body,
+    });
+
+    return res.status(201).json(result);
+  } catch (error) {
+    console.error("Submit bank details request error:", error);
+
+    const statusCode =
+      error.code === "EMPLOYEE_NOT_FOUND" ? 404 : 400;
+
+    return res.status(statusCode).json({
+      success: false,
+      error: error.code || "BANK_DETAILS_REQUEST_FAILED",
+      message: error.message || "Unable to submit bank details request",
+      data: null,
+    });
+  }
+}
+
+// APPROVE BANK DETAILS REQUEST
+
+async function approveBankDetailsRequest(req, res) {
+  try {
+    const result =
+      await employeeProfileService.approveBankDetailsRequest({
+        requestId: req.params.id,
+        adminId: req.user.id,
+        remarks: req.body.remarks || null,
+      });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Approve bank details request error:", error);
+
+    return res.status(
+      error.code === "REQUEST_NOT_FOUND" ||
+      error.code === "BANK_DETAILS_NOT_FOUND" ||
+      error.code === "EMPLOYEE_NOT_FOUND"
+        ? 404
+        : 400
+    ).json({
+      success: false,
+      error: error.code || "BANK_APPROVAL_FAILED",
+      message: error.message || "Unable to approve bank details request",
+      data: null,
+    });
+  }
+}
+
+// REMOVE BANK DETAILS REQUEST
+
+async function rejectBankDetailsRequest(req, res) {
+  try {
+    const result =
+      await employeeProfileService.rejectBankDetailsRequest({
+        requestId: req.params.id,
+        adminId: req.user.id,
+        remarks: req.body.remarks,
+      });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Reject bank details request error:", error);
+
+    return res.status(
+      error.code === "REQUEST_NOT_FOUND" ? 404 : 400
+    ).json({
+      success: false,
+      error: error.code || "BANK_REJECTION_FAILED",
+      message: error.message || "Unable to reject bank details request",
+      data: null,
+    });
+  }
+}
+
+
 module.exports = {
   getMyEmployeeProfile,
   uploadMyProfilePicture,
@@ -1524,4 +1709,11 @@ module.exports = {
    submitIdentityDetailsRequest,
    approveIdentityDetailsRequest,
    rejectIdentityDetailsRequest,
+   submitStatutoryDetailsRequest,
+  approveStatutoryDetailsRequest,
+  rejectStatutoryDetailsRequest,
+  submitBankDetailsRequest,
+  approveBankDetailsRequest,
+  rejectBankDetailsRequest,
+  
 };

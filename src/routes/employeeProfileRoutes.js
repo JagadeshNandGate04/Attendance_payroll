@@ -274,4 +274,54 @@ router.patch(
   employeeProfileController.rejectIdentityDetailsRequest
 );
 
+// SUBMIT PF / ESI STATUTORY DETAILS REQUEST
+router.post(
+  "/me/statutory-details/request",
+  userAuthorize(),
+  employeeProfileController.submitStatutoryDetailsRequest
+);
+
+// =====================================================
+// APPROVE PF / ESI STATUTORY DETAILS REQUEST
+// =====================================================
+
+router.patch(
+  "/admin/requests/:id/statutory/approve",
+  adminAuthorize(),
+  employeeProfileController.approveStatutoryDetailsRequest
+);
+
+// =====================================================
+// REJECT PF / ESI STATUTORY DETAILS REQUEST
+// =====================================================
+
+router.patch(
+  "/admin/requests/:id/statutory/reject",
+  adminAuthorize(),
+  employeeProfileController.rejectStatutoryDetailsRequest
+);
+
+// SUBMIT BANK DETAILS
+
+router.post(
+  "/me/bank-details/request",
+  userAuthorize(),
+  employeeProfileController.submitBankDetailsRequest
+);
+
+// APPROVE BANK DETAILS REQUEST
+router.patch(
+  "/admin/requests/:id/bank/approve",
+  adminAuthorize(),
+  employeeProfileController.approveBankDetailsRequest
+);
+
+// REJECT BANK DETAILS REJECT
+
+router.patch(
+  "/admin/requests/:id/bank/reject",
+  adminAuthorize(),
+  employeeProfileController.rejectBankDetailsRequest
+);
+
 module.exports = router;
