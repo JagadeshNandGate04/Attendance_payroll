@@ -52,3 +52,22 @@ Designation names are trimmed, must be unique (case-insensitively), and may be
 up to 80 characters. The migration seeds the list with existing employee
 designations so current values remain available in the dropdown. Apply the
 `create_designations` migration before using these endpoints.
+
+## Employee dashboard
+
+After an employee logs in, dashboard data is available from the authenticated
+endpoint `GET /api/v1/employees/me/dashboard`. It returns the employee's
+username, today's first punch-in time and attendance status, the current
+month's calendar with attendance and relevant holiday, leave, and
+compensation-workday events, the month-to-date LOP total, and leave balance.
+It also includes the 20 most recent admin announcements addressed to that
+employee. The employee identity is taken from the access token; the request
+does not accept an employee ID.
+
+The employee calendar is also available independently at
+`GET /api/v1/employees/me/calendar`. It defaults to the current month and
+accepts optional `month` and `year` query parameters together, for example
+`GET /api/v1/employees/me/calendar?month=11&year=2026`. Each day includes that
+employee's attendance and events for common or employee-specific holidays,
+approved or pending leave, and compensation holidays/workdays. Compensation
+workday events include whether attendance shows work and the attendance status.

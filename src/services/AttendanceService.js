@@ -1239,6 +1239,7 @@ async function getMyAttendance({
 
   let liveStatus = "OUT";
   let lastPunch = null;
+  let firstPunchIn = null;
 
   if (today >= startDate && today < endExclusive) {
     const punches = await getPunchesForDate(
@@ -1259,6 +1260,11 @@ async function getMyAttendance({
     lastPunch = validPunches.length
       ? validPunches[validPunches.length - 1]
       : null;
+
+    firstPunchIn =
+      validPunches.find(
+        (punch) => punch.direction === DIRECTIONS.IN
+      ) || null;
 
     if (
       lastPunch &&
@@ -1290,6 +1296,9 @@ async function getMyAttendance({
       today: {
         date: today,
         status: liveStatus,
+        punch_in_time: firstPunchIn
+          ? formatPunchDateTime(firstPunchIn.punched_at)
+          : null,
         last_punch: lastPunch,
       },
 

@@ -1,4 +1,44 @@
 const employeeService = require("../services/employeeService");
+const employeeDashboardService = require("../services/employeeDashboardService");
+
+async function getMyDashboard(req, res, next) {
+  try {
+    const result = await employeeDashboardService.getEmployeeDashboard({
+      userId: req.user.id,
+      empCode: req.user.emp_code,
+    });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function getMyCalendar(req, res, next) {
+  try {
+    const result = await employeeDashboardService.getEmployeeCalendar({
+      userId: req.user.id,
+      empCode: req.user.emp_code,
+      month: req.query.month,
+      year: req.query.year,
+    });
+
+    return res.status(200).json(result);
+  } catch (error) {
+    if (
+      error.message === "Month and year are required" ||
+      error.message === "Invalid month" ||
+      error.message === "Invalid year"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return next(error);
+  }
+}
 
 async function createEmployee(req, res) {
   try {
@@ -139,6 +179,8 @@ async function getEmployeeById(req, res) {
 }
 
 module.exports = {
+  getMyDashboard,
+  getMyCalendar,
   createEmployee,
   getAllEmployees,
   getEmployeeById

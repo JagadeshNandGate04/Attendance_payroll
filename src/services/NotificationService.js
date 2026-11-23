@@ -100,6 +100,26 @@ async function getUnreadCount({ userId }) {
   };
 }
 
+async function getAnnouncements({ userId, limit = 20 }) {
+  const announcements = await knex("notifications")
+    .select(
+      "id",
+      "title",
+      "message",
+      "data",
+      "is_read",
+      "created_at"
+    )
+    .where({
+      user_id: userId,
+      type: "ANNOUNCEMENT"
+    })
+    .orderBy("created_at", "desc")
+    .limit(limit);
+
+  return announcements;
+}
+
 // ==========================================================
 // MARK ONE NOTIFICATION AS READ
 // ==========================================================
@@ -241,6 +261,7 @@ async function createAnnouncement({
 module.exports = {
   getNotifications,
   getUnreadCount,
+  getAnnouncements,
   markAsRead,
   markAllAsRead,
   createAnnouncement
