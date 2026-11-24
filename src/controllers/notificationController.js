@@ -111,7 +111,8 @@ async function createAnnouncement(req, res) {
     const result = await notificationService.createAnnouncement({
       actorId: req.user.id,
       title: req.body?.title,
-      message: req.body?.message
+      message: req.body?.message,
+      expiresOn: req.body?.expires_on
     });
 
     return res.status(201).json(result);

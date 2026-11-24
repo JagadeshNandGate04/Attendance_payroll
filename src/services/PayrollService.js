@@ -2,6 +2,9 @@ const knex = require("../config/database");
 const path = require("path");
 const ExcelJS = require("exceljs");
 const fs = require("fs");
+const { isLopAdjustableStatus, getLocalDateString } = require("../utils/attendanceStatus");
+const { getMonthRange } = require("../utils/attendanceUtils");
+const { ensureCompletedAttendance } = require("./attendanceCatchupService");
 
 const {
   generatePayslipPdf,
@@ -99,9 +102,9 @@ async function getFinalEmployeeLopDays({
 
     let finalLop = calculatedLop;
 
-    // Apply adjustment ONLY to ABSENT attendance.
+    // Apply adjustments to absent attendance statuses.
     if (
-      day.status === "ABSENT" &&
+      isLopAdjustableStatus(day.status) &&
       adjustment
     ) {
       finalLop = Number(adjustment.new_lop);
@@ -230,6 +233,9 @@ async function createPayrollRun({ adminId, month, year }) {
     const payrollItems = [];
 
     for (const user of users) {
+      await ensureCompletedAttendance({
+        trx, userId: user.id, year: yearNumber, month: monthNumber, requireUnlocked: true
+      });
 
       // GET EFFECTIVE SALARY STRUCTURE
 
@@ -578,8 +584,8 @@ async function getPayrollRunById({ payrollRunId }) {
     let finalLop = calculatedLop;
     let adjustedLop = null;
 
-    // Apply adjustment only for ABSENT status.
-    if (day.status === "ABSENT" && adjustment) {
+    // Apply adjustments to absent attendance statuses.
+    if (isLopAdjustableStatus(day.status) && adjustment) {
 
       adjustedLop = Number(adjustment.new_lop);
 
@@ -606,7 +612,7 @@ async function getPayrollRunById({ payrollRunId }) {
         lop_value: finalLop.toFixed(2),
 
         lop_adjustment:
-          day.status === "ABSENT" && adjustment
+          isLopAdjustableStatus(day.status) && adjustment
             ? {
                 id: adjustment.id,
                 previous_lop: Number(
@@ -876,6 +882,7 @@ async function recomputePayrollRun({
     for (const employee of employeeMap.values()) {
 
       const userId = employee.id;
+      await ensureCompletedAttendance({ trx, userId, year, month, requireUnlocked: true });
 
       // -----------------------------------------------
       // GET EFFECTIVE SALARY STRUCTURE
@@ -1297,6 +1304,13 @@ async function finalizePayrollRun({
         throw error;
       }
 
+      const { endExclusive } = getMonthRange(Number(payrollRun.year), Number(payrollRun.month));
+      if (getLocalDateString() < endExclusive) {
+        const error = new Error("Payroll can only be finalized after the month ends");
+        error.code = "INVALID_STATE";
+        throw error;
+      }
+
       // =================================================
       // 2. GET AND LOCK PAYROLL ITEMS
       // =================================================
@@ -1313,6 +1327,23 @@ async function finalizePayrollRun({
 
         error.code = "INVALID_STATE";
         throw error;
+      }
+
+      for (const item of payrollItems) {
+        await ensureCompletedAttendance({
+          trx, userId: item.user_id,
+          year: Number(payrollRun.year), month: Number(payrollRun.month),
+          requireUnlocked: true
+        });
+        const currentLop = await getFinalEmployeeLopDays({
+          trx, userId: item.user_id,
+          year: Number(payrollRun.year), month: Number(payrollRun.month)
+        });
+        if (currentLop !== Number(item.lop_days)) {
+          const error = new Error("Attendance changed since payroll was calculated; recompute the payroll run and review attendance before finalizing");
+          error.code = "INVALID_STATE";
+          throw error;
+        }
       }
 
       let insertedPayslips = 0;

@@ -11,6 +11,7 @@ const {
 const {
   startLeaveAccrualWorker,
 } = require("./src/workers/leaveAccrualWorker");
+const { startAttendanceCatchupWorker } = require("./src/workers/attendanceCatchupWorker");
 
 const PORT = process.env.PORT || 5001;
 const NODE_ENV = process.env.NODE_ENV || "development";
@@ -19,6 +20,7 @@ let server = null;
 
 let stopPushWorker = null;
 let stopLeaveAccrualWorker = null;
+let stopAttendanceCatchupWorker = null;
 
 let isShuttingDown = false;
 
@@ -36,6 +38,7 @@ function startWorkers() {
   stopLeaveAccrualWorker = startLeaveAccrualWorker();
 
   console.log("Leave Accrual Worker Started");
+  stopAttendanceCatchupWorker = startAttendanceCatchupWorker();
 }
 
 // =====================================================
@@ -43,6 +46,10 @@ function startWorkers() {
 // =====================================================
 
 async function stopWorkers() {
+  if (stopAttendanceCatchupWorker) {
+    await stopAttendanceCatchupWorker();
+    stopAttendanceCatchupWorker = null;
+  }
   if (stopPushWorker) {
     try {
       await stopPushWorker();

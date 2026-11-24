@@ -1,5 +1,28 @@
 # nandgate-human-resource-backend
 
+## Dated announcements
+
+Apply the `add_announcement_expiry` migration, then restart the backend.
+Admins send announcements to active employees with
+`POST /api/v1/notifications/admin/announcements`:
+
+```json
+{
+  "title": "Office maintenance",
+  "message": "Please use the side entrance.",
+  "expires_on": "2026-12-15"
+}
+```
+
+`expires_on` is required, uses `YYYY-MM-DD`, and cannot be before today in
+`TIMEZONE` (default `Asia/Kolkata`). The announcement remains visible through
+the end of that date. Afterward it is hidden from employee notification lists,
+unread counts and dashboard announcements, but its database record is kept.
+Existing announcements without an expiry remain visible. Expired push jobs
+are skipped; notifications already delivered to a device cannot be removed by
+the backend. Clients should use `expires_on` to expire locally cached or
+already delivered announcements as appropriate.
+
 ## Short-notice and half-day leave
 
 Apply the `add_leave_period` migration before using this feature. Employees
@@ -40,6 +63,41 @@ reject a leave request.
 Run the integration test with
 `TEST_DATABASE_URL=postgresql://... node --test tests/shortNoticeLeave.test.js`.
 It creates and removes a uniquely named schema in the supplied test database.
+
+## Uninformed attendance and rejected leave
+
+The attendance worker runs on server startup and at five minutes past each hour
+in `TIMEZONE` (default `Asia/Kolkata`). It checks completed dates in the current
+month, starting no earlier than each active employee's joining date. Missing
+summaries are calculated using punches, approved leave, holidays, weekly offs
+and workday swaps. A completed working day with no punches and no approved
+leave is `UNINFORMED` with 2 LOP, including when a leave request is pending or
+rejected. Today and future dates are not marked uninformed in advance.
+Incomplete punches use the existing regularization rules. Approved half-day
+leave retains its separate 1 LOP rule when the other half is not worked.
+
+Existing unlocked no-punch `ABSENT` summaries are relabeled without changing
+their LOP or admin adjustments. Locked months and finalized payroll months are
+not modified. If punches arrive later, the next catch-up recalculates unlocked
+uninformed days. Admins can adjust LOP for both `ABSENT` and `UNINFORMED`;
+the adjustment remains effective in attendance and payroll while the status
+remains one of those two.
+
+Creating or recomputing a payroll draft fills missing completed attendance for
+its month, including the previous month after a server outage. Payroll can be
+finalized only after the month ends. If attendance or its adjustments have
+changed since the draft was calculated, finalization is blocked until an admin
+recomputes the draft and reviews the attendance. If the review changes LOP,
+recompute the draft again before finalizing. Restart the backend
+to start the new worker; no database migration is required for this feature.
+
+Rejected leave sends an employee notification whose message and
+`data.decision_note` contain the admin's required decision note. The note is
+also returned in the employee's leave request list. Push delivery requires a
+registered device and the existing push worker.
+
+Run the integration tests with an isolated PostgreSQL database using
+`TEST_DATABASE_URL=postgresql://... node --test tests/uninformedAttendance.test.js tests/shortNoticeLeave.test.js`.
 
 ## Employee-specific workday swaps
 

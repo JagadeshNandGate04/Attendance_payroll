@@ -34,7 +34,8 @@ test("short-notice notifications and half-day leave integration", {
       "20261113093000_create_workday_swaps",
       "20261113043442_rename_shutdown_date_to_holiday_date",
       "20261116000000_add_holiday_employee_scope",
-      "20261124000000_add_leave_period"
+      "20261124000000_add_leave_period",
+      "20261124010000_add_announcement_expiry"
     ]) {
       await require(`../migrations/${migration}`).up(db);
     }

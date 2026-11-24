@@ -398,7 +398,7 @@ async function getAdminDashboard({ period = "week" } = {}) {
           ) AS late_count,
 
           COUNT(*) FILTER (
-            WHERE UPPER(status) = 'ABSENT'
+            WHERE UPPER(status) IN ('ABSENT', 'UNINFORMED')
           ) AS absent_count
 
         FROM day_summaries
@@ -557,7 +557,7 @@ async function getAdminDashboard({ period = "week" } = {}) {
       }
 
       // ABSENT
-      if (status === "ABSENT") {
+      if (status === "ABSENT" || status === "UNINFORMED") {
         todayBoard.absent.push(employeeData);
         continue;
       }

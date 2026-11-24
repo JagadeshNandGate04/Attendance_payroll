@@ -429,7 +429,7 @@ async function adjustAttendanceLop(req, res) {
       error.message === "Admin user not found"
         ? 404
         : error.message === "MONTH_LOCKED" ||
-          error.message === "LOP adjustment is allowed only for ABSENT days" ||
+          error.message === "LOP adjustment is allowed only for ABSENT or UNINFORMED days" ||
           error.message === "New LOP is the same as the current LOP"
           ? 404
           : 400;

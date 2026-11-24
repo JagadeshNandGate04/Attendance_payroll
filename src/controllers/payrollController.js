@@ -36,6 +36,14 @@ async function createPayrollRun(req, res) {
       });
     }
 
+    if (error.code === 'INVALID_STATE') {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message,
+      });
+    }
+
     if (error.code === 'DUPLICATE') {
       return res.status(404).json({
         success: false,

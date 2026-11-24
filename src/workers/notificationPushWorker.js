@@ -4,6 +4,7 @@ const knex = require("../config/database");
 const {
   sendPushNotification,
 } = require("../services/NotificationPushService");
+const { getLocalDateString } = require("../utils/attendanceStatus");
 
 // =====================================================
 // CONFIGURATION
@@ -122,6 +123,7 @@ async function getJobDetails(jobId) {
       "n.entity_type",
       "n.entity_id",
       "n.data",
+      knex.raw("n.expires_on::text AS expires_on"),
 
       "u.fcm_tokens"
     )
@@ -223,6 +225,15 @@ async function processJob(job) {
         "Notification or recipient no longer exists."
       );
 
+      return;
+    }
+
+    if (
+      notification.type === "ANNOUNCEMENT" &&
+      notification.expires_on &&
+      notification.expires_on < getLocalDateString()
+    ) {
+      await markJobAsSkipped(job.id, "Announcement has expired.");
       return;
     }
 

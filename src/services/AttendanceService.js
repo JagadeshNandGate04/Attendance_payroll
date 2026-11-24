@@ -13,6 +13,7 @@ const {
 
 const { formatDateOnly } = require("../utils/dateHelpers");
 const { applyHolidayEmployeeScope } = require("../utils/holidayUtils");
+const { isLopAdjustableStatus, getLocalDateString, getLocalDayBounds } = require("../utils/attendanceStatus");
 
 // =====================================================
 // CONSTANTS
@@ -22,6 +23,7 @@ const STATUS = {
   PRESENT: "PRESENT",
   HALF_DAY: "HALF_DAY",
   ABSENT: "ABSENT",
+  UNINFORMED: "UNINFORMED",
   LEAVE: "LEAVE",
   HOLIDAY: "HOLIDAY",
   WEEKLY_OFF: "WEEKLY_OFF",
@@ -203,12 +205,12 @@ async function getLatestLopAdjustments({
 function getFinalLopValue(summary, adjustment) {
   const calculatedLop = Number(summary?.lop_value || 0);
 
-  // Manual adjustments only apply to ABSENT days.
+  // Manual adjustments apply to ABSENT and UNINFORMED days.
   // If the status changes, use the newly calculated LOP.
 
   if (
     summary &&
-    summary.status === STATUS.ABSENT &&
+    isLopAdjustableStatus(summary.status) &&
     adjustment
   ) {
     return Number(adjustment.new_lop);
@@ -227,7 +229,7 @@ function formatLopDetails(summary, adjustment) {
   const isAdjustmentActive =
     Boolean(
       summary &&
-      summary.status === STATUS.ABSENT &&
+      isLopAdjustableStatus(summary.status) &&
       adjustment
     );
 
@@ -461,15 +463,7 @@ async function getPunchesForDate(
   date,
   trx = knex
 ) {
-  const start = `${date} 00:00:00`;
-
-  const nextDate = new Date(`${date}T00:00:00Z`);
-
-  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-
-  const nextDateString = nextDate.toISOString().slice(0, 10);
-
-  const end = `${nextDateString} 00:00:00`;
+  const { start, end } = getLocalDayBounds(date);
 
   const rawPunches = await trx("raw_punches")
     .select(
@@ -774,6 +768,11 @@ const isReplacementDate =
     }
   }
 
+  if (!leave && sessions.length === 0 && date < getLocalDateString()) {
+    status = STATUS.UNINFORMED;
+    lopValue = 2;
+  }
+
   // -----------------------------------------------------
   // RETURN DAY SUMMARY
   // -----------------------------------------------------
@@ -938,13 +937,7 @@ async function getMyAttendance({
     validated.month
   );
 
-  // Current date in Asia/Kolkata
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  const today = getLocalDateString();
 
   // Last date of the selected month
   const lastMonthDate = new Date(
@@ -1030,6 +1023,7 @@ async function getMyAttendance({
       // Existing locked summaries remain untouched.
       if (
         isCompletedDay &&
+        workDate >= formatDateOnly(employee.date_of_joining) &&
         !existingDates.has(workDate)
       ) {
         await recomputeDay(userId, workDate);
@@ -1198,6 +1192,7 @@ async function getMyAttendance({
         break;
 
       case STATUS.ABSENT:
+      case STATUS.UNINFORMED:
         totals.absent++;
         break;
 
@@ -1700,8 +1695,7 @@ async function getAdminDailyAttendance({ date }) {
   nextDate.setUTCDate(nextDate.getUTCDate() + 1);
 
   const endExclusive = nextDate.toISOString().slice(0, 10);
-  const startTimestamp = `${validatedDate}T00:00:00+05:30`;
-  const endTimestamp = `${endExclusive}T00:00:00+05:30`;
+  const { start: startTimestamp, end: endTimestamp } = getLocalDayBounds(validatedDate);
 
   // ---------------------------------------------------
   // GET EMPLOYEES
@@ -1896,11 +1890,11 @@ async function getAdminDailyAttendance({ date }) {
     const adjustment =
       lopAdjustments.get(String(employee.id)) || null;
 
-    // Apply manual adjustment only to current ABSENT status.
+    // Apply manual adjustments to absent attendance statuses.
     const isAdjustmentApplicable =
       Boolean(
         summary &&
-        summary.status === STATUS.ABSENT &&
+        isLopAdjustableStatus(summary.status) &&
         adjustment
       );
 
@@ -1926,7 +1920,7 @@ async function getAdminDailyAttendance({ date }) {
 
       status: summary
         ? summary.status
-        : STATUS.ABSENT,
+        : validatedDate >= getLocalDateString() ? null : STATUS.ABSENT,
 
       live_status: liveStatus,
 
@@ -2018,16 +2012,8 @@ async function getAdminMonthlyAttendance({
     validated.month
   );
 
-  const getISTDateKey = (value) => {
-    if (!value) return null;
-
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Kolkata",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date(value));
-  };
+  const startTimestamp = getLocalDayBounds(startDate).start;
+  const endTimestamp = getLocalDayBounds(endExclusive).start;
 
   // 1. DAILY SUMMARIES
 
@@ -2083,14 +2069,14 @@ async function getAdminMonthlyAttendance({
     .where({
       emp_code: employee.emp_code,
     })
-    .where("punched_at", ">=", startDate)
-    .where("punched_at", "<", endExclusive)
+    .where("punched_at", ">=", startTimestamp)
+    .where("punched_at", "<", endTimestamp)
     .orderBy("punched_at", "asc");
 
   const rawMap = new Map();
 
   for (const punch of rawPunches) {
-    const date = getISTDateKey(punch.punched_at);
+    const date = getLocalDateString(new Date(punch.punched_at));
 
     if (!rawMap.has(date)) {
       rawMap.set(date, []);
@@ -2121,12 +2107,12 @@ async function getAdminMonthlyAttendance({
     .where(
       "correction_punches.punched_at",
       ">=",
-      startDate
+      startTimestamp
     )
     .where(
       "correction_punches.punched_at",
       "<",
-      endExclusive
+      endTimestamp
     )
     .orderBy(
       "correction_punches.punched_at",
@@ -2136,7 +2122,7 @@ async function getAdminMonthlyAttendance({
   const correctionMap = new Map();
 
   for (const correction of corrections) {
-    const date = getISTDateKey(correction.punched_at);
+    const date = getLocalDateString(new Date(correction.punched_at));
 
     if (!correctionMap.has(date)) {
       correctionMap.set(date, []);
@@ -2198,7 +2184,7 @@ async function getAdminMonthlyAttendance({
         new Date(b.punched_at).getTime()
     );
 
-    const adjustment = adjustmentMap.get(date) || null;
+    const adjustment = adjustmentMap.get(`${validatedUserId}_${date}`) || null;
 
     const lopDetails = daySummary
       ? formatLopDetails(daySummary, adjustment)
@@ -2325,6 +2311,7 @@ async function getAdminMonthlyAttendance({
         break;
 
       case STATUS.ABSENT:
+      case STATUS.UNINFORMED:
         totals.absent++;
         break;
 
@@ -2529,11 +2516,11 @@ async function adjustAttendanceLop({
       throw new Error("MONTH_LOCKED");
     }
 
-    // ONLY ABSENT DAYS CAN BE ADJUSTED
+    // ONLY ABSENT AND UNINFORMED DAYS CAN BE ADJUSTED
 
-    if (summary.status !== STATUS.ABSENT) {
+    if (!isLopAdjustableStatus(summary.status)) {
       throw new Error(
-        "LOP adjustment is allowed only for ABSENT days"
+        "LOP adjustment is allowed only for ABSENT or UNINFORMED days"
       );
     }
 

@@ -1044,6 +1044,7 @@ async function getMyLeaveRequests({
       "reason",
       "is_retroactive",
       "status",
+      "decision_note",
       "created_at",
       "updated_at"
     )
@@ -1599,7 +1600,7 @@ async function decideAdminLeave({
       actorId: adminId,
       type: "LEAVE_REJECTED",
       title: "Leave Request Rejected",
-      message: `Your leave request from ${fromDate} to ${toDate} has been rejected.`,
+      message: `Your leave request from ${fromDate} to ${toDate} has been rejected. Reason: ${String(note).trim()}`,
       entityType: "leave_request",
       entityId: id,
       data: {

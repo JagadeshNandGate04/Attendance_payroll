@@ -1,5 +1,16 @@
 
 const knex = require("../config/database");
+const { validateDate } = require("../utils/attendanceUtils");
+const { getLocalDateString } = require("../utils/attendanceStatus");
+
+function visibleNotifications(query) {
+  const today = getLocalDateString();
+  return query.where(function () {
+    this.whereNot("type", "ANNOUNCEMENT")
+      .orWhereNull("expires_on")
+      .orWhere("expires_on", ">=", today);
+  });
+}
 
 // ==========================================================
 // GET NOTIFICATIONS
@@ -28,8 +39,9 @@ async function getNotifications({
 
   const offset = (pageNumber - 1) * limitNumber;
 
-  const query = knex("notifications")
-    .where({ user_id: userId });
+  const query = visibleNotifications(
+    knex("notifications").where({ user_id: userId })
+  );
 
   if (
     unreadOnly === true ||
@@ -49,6 +61,7 @@ async function getNotifications({
         "type",
         "title",
         "message",
+        knex.raw("expires_on::text AS expires_on"),
         "entity_type",
         "entity_id",
         "data",
@@ -86,12 +99,12 @@ async function getNotifications({
 // ==========================================================
 
 async function getUnreadCount({ userId }) {
-  const result = await knex("notifications")
+  const result = await visibleNotifications(knex("notifications")
     .count({ unread_count: "*" })
     .where({
       user_id: userId,
       is_read: false
-    })
+    }))
     .first();
 
   return {
@@ -103,11 +116,12 @@ async function getUnreadCount({ userId }) {
 }
 
 async function getAnnouncements({ userId, limit = 20 }) {
-  const announcements = await knex("notifications")
+  const announcements = await visibleNotifications(knex("notifications")
     .select(
       "id",
       "title",
       "message",
+      knex.raw("expires_on::text AS expires_on"),
       "data",
       "is_read",
       "created_at"
@@ -115,7 +129,7 @@ async function getAnnouncements({ userId, limit = 20 }) {
     .where({
       user_id: userId,
       type: "ANNOUNCEMENT"
-    })
+    }))
     .orderBy("created_at", "desc")
     .limit(limit);
 
@@ -142,11 +156,11 @@ async function markAsRead({
 
   const id = Number(notificationId);
 
-  const [notification] = await knex("notifications")
+  const [notification] = await visibleNotifications(knex("notifications")
     .where({
       id,
       user_id: userId
-    })
+    }))
     .update({
       is_read: true,
       read_at: knex.fn.now()
@@ -180,11 +194,11 @@ async function markAsRead({
 // ==========================================================
 
 async function markAllAsRead({ userId }) {
-  const updatedCount = await knex("notifications")
+  const updatedCount = await visibleNotifications(knex("notifications")
     .where({
       user_id: userId,
       is_read: false
-    })
+    }))
     .update({
       is_read: true,
       read_at: knex.fn.now()
@@ -206,7 +220,8 @@ async function markAllAsRead({ userId }) {
 async function createAnnouncement({
   actorId,
   title,
-  message
+  message,
+  expiresOn
 }) {
   if (
     typeof title !== "string" ||
@@ -224,6 +239,18 @@ async function createAnnouncement({
 
   const announcementTitle = title.trim();
   const announcementMessage = message.trim();
+  try {
+    validateDate(expiresOn);
+  } catch (error) {
+    const invalidDate = new Error("expires_on must be a valid date in YYYY-MM-DD format");
+    invalidDate.code = "INVALID_ANNOUNCEMENT";
+    throw invalidDate;
+  }
+  if (expiresOn < getLocalDateString()) {
+    const error = new Error("expires_on cannot be in the past");
+    error.code = "INVALID_ANNOUNCEMENT";
+    throw error;
+  }
 
   const recipientCount = await knex.transaction(async (trx) => {
     const employees = await trx("users")
@@ -237,7 +264,9 @@ async function createAnnouncement({
       type: "ANNOUNCEMENT",
       title: announcementTitle,
       message: announcementMessage,
-      entity_type: "announcement"
+      entity_type: "announcement",
+      expires_on: expiresOn,
+      data: { expires_on: expiresOn }
     }));
 
     const batchSize = 500;
@@ -255,7 +284,8 @@ async function createAnnouncement({
     success: true,
     message: "Announcement sent to active employees",
     data: {
-      recipient_count: recipientCount
+      recipient_count: recipientCount,
+      expires_on: expiresOn
     }
   };
 }
