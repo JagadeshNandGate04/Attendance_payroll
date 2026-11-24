@@ -6,7 +6,7 @@ const { getLocalDateString } = require("../utils/attendanceStatus");
 function visibleNotifications(query) {
   const today = getLocalDateString();
   return query.where(function () {
-    this.whereNot("type", "ANNOUNCEMENT")
+    this.whereNotIn("type", ["ANNOUNCEMENT", "BIRTHDAY_WISH", "EMPLOYEE_BIRTHDAY"])
       .orWhereNull("expires_on")
       .orWhere("expires_on", ">=", today);
   });

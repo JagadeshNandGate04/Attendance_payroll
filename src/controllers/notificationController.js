@@ -1,5 +1,26 @@
 
 const notificationService = require("../services/NotificationService");
+const { getEmployeeBirthdays } = require("../services/birthdayNotificationService");
+
+async function getBirthdays(req, res) {
+  try {
+    const result = await getEmployeeBirthdays({ month: req.query.month });
+    return res.status(200).json(result);
+  } catch (error) {
+    if (error.code === "INVALID_MONTH") {
+      return res.status(400).json({
+        success: false,
+        error: error.code,
+        message: error.message
+      });
+    }
+    console.error("Get employee birthdays error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching birthdays"
+    });
+  }
+}
 
 // GET NOTIFICATIONS
 async function getNotifications(req, res) {
@@ -136,6 +157,7 @@ async function createAnnouncement(req, res) {
 }
 
 module.exports = {
+  getBirthdays,
   getNotifications,
   getUnreadCount,
   markAsRead,

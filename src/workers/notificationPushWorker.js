@@ -229,11 +229,11 @@ async function processJob(job) {
     }
 
     if (
-      notification.type === "ANNOUNCEMENT" &&
+      ["ANNOUNCEMENT", "BIRTHDAY_WISH", "EMPLOYEE_BIRTHDAY"].includes(notification.type) &&
       notification.expires_on &&
       notification.expires_on < getLocalDateString()
     ) {
-      await markJobAsSkipped(job.id, "Announcement has expired.");
+      await markJobAsSkipped(job.id, `${notification.type === "ANNOUNCEMENT" ? "Announcement" : "Birthday notification"} has expired.`);
       return;
     }
 

@@ -1,5 +1,56 @@
 # nandgate-human-resource-backend
 
+## Employee birthday notifications
+
+Apply the `add_employee_birthdays` migration and restart the backend. The
+approved personal profile `date_of_birth` is the source of truth. The migration
+copies existing values to `users.date_of_birth` and keeps that copy in sync when
+the profile is changed or cleared. Employees submit personal-detail changes
+through the existing profile workflow; the date takes effect after admin
+approval. Employees with no approved date of birth are skipped.
+
+On an active employee's birthday, the employee receives a `BIRTHDAY_WISH`
+notification. Other active employees and active admins receive an
+`EMPLOYEE_BIRTHDAY` notification naming the employee. The notification includes
+`birthday_date` and `expires_on`, not the birth year or age. It is visible only
+on the birthday in `TIMEZONE` (default `Asia/Kolkata`); records are retained
+afterward. February 29 birthdays are celebrated on February 28 in non-leap
+years.
+
+The birthday worker checks at startup and five minutes past each hour. Repeated
+checks and multiple server instances do not create duplicate notifications for
+the same employee, recipient and birthday. If the server is down for the
+entire birthday, it does not send belated wishes. Push delivery requires the
+existing push worker and registered devices; an expired queued birthday push is
+skipped. A push already delivered to a device cannot be removed by the backend,
+so clients should use `expires_on` for locally displayed notifications.
+
+The PostgreSQL integration test can be run with an isolated database:
+`TEST_DATABASE_URL=postgresql://... node --test tests/birthdayNotifications.test.js`.
+
+### Birthday list API
+
+Authenticated employees can use `GET /api/v1/notifications/me/birthdays`;
+admins can use `GET /api/v1/notifications/admin/birthdays`. Add `?month=2`
+to filter by month (1–12), or omit it to list all months. Only active employees
+with an approved date of birth appear, ordered by month, day, then name. The
+response excludes birth years and ages:
+
+```json
+{
+  "success": true,
+  "data": {
+    "month": 2,
+    "birthdays": [
+      { "id": "12", "emp_code": "EMP012", "name": "Alex", "month": 2, "day": 29 }
+    ]
+  }
+}
+```
+
+February 29 remains the recorded birthday in this list; the notification is
+sent on February 28 in non-leap years. An invalid month returns HTTP 400.
+
 ## Dated announcements
 
 Apply the `add_announcement_expiry` migration, then restart the backend.

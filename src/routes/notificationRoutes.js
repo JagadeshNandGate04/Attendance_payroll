@@ -13,6 +13,12 @@ const notificationController =
 // EMPLOYEE NOTIFICATIONS
 
 router.get(
+  "/me/birthdays",
+  userAuthorize(),
+  notificationController.getBirthdays
+);
+
+router.get(
   "/me/get-notifications",
   userAuthorize(),
   notificationController.getNotifications
@@ -37,6 +43,12 @@ router.patch(
 );
 
 // ADMIN NOTIFICATIONS
+
+router.get(
+  "/admin/birthdays",
+  adminAuthorize(),
+  notificationController.getBirthdays
+);
 
 router.get(
   "/admin/get-notifications",
