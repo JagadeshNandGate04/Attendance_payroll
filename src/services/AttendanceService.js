@@ -623,7 +623,7 @@ const isReplacementDate =
   // APPROVED LEAVE
   // -----------------------------------------------------
 
-  if (leave) {
+  if (leave && leave.leave_period === "FULL_DAY") {
     return {
       status: STATUS.LEAVE,
       first_in: null,
@@ -762,6 +762,16 @@ const isReplacementDate =
   } else {
     status = STATUS.ABSENT;
     lopValue = 2;
+  }
+
+  if (leave && leave.leave_period !== "FULL_DAY" && !needsRegularization) {
+    if (workMin >= halfDayMin) {
+      status = STATUS.HALF_DAY;
+      lopValue = 0;
+    } else {
+      status = STATUS.ABSENT;
+      lopValue = 1;
+    }
   }
 
   // -----------------------------------------------------
@@ -1071,6 +1081,16 @@ async function getMyAttendance({
     endExclusive,
   });
 
+  const halfDayLeaves = await knex("leave_requests")
+    .select(knex.raw("from_date::text AS from_date"), "leave_period")
+    .where({ user_id: userId, status: "APPROVED" })
+    .whereIn("leave_period", ["MORNING", "AFTERNOON"])
+    .where("from_date", ">=", startDate)
+    .where("from_date", "<", endExclusive);
+  const halfDayLeaveByDate = new Map(
+    halfDayLeaves.map((leave) => [leave.from_date, leave.leave_period])
+  );
+
   // =====================================================
   // 8. FORMAT ATTENDANCE BY DATE
   // =====================================================
@@ -1087,6 +1107,7 @@ async function getMyAttendance({
       ...day,
       work_date: date,
       ...formatLopDetails(day, adjustment),
+      leave_period: halfDayLeaveByDate.get(date) || null,
       is_pending: false,
     });
   }
@@ -1129,6 +1150,7 @@ async function getMyAttendance({
           calculated_lop_value: 0,
           adjusted_lop_value: null,
           lop_adjustment: null,
+          leave_period: halfDayLeaveByDate.get(workDate) || null,
           is_locked: false,
           is_pending: true,
         });
@@ -1194,6 +1216,14 @@ async function getMyAttendance({
       case STATUS.INSUFFICIENT:
         totals.insufficient++;
         break;
+    }
+
+    if (
+      day.leave_period &&
+      day.status !== STATUS.HOLIDAY &&
+      day.status !== STATUS.WEEKLY_OFF
+    ) {
+      totals.leave += 0.5;
     }
 
     if (day.is_late) {
@@ -2313,6 +2343,14 @@ async function getAdminMonthlyAttendance({
       case STATUS.INSUFFICIENT:
         totals.insufficient++;
         break;
+    }
+
+    if (
+      summary.status !== STATUS.HOLIDAY &&
+      summary.status !== STATUS.WEEKLY_OFF &&
+      day.leave.some((leave) => leave.leave_period !== "FULL_DAY")
+    ) {
+      totals.leave += 0.5;
     }
 
     if (summary.is_late) {

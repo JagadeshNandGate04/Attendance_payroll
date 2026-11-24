@@ -88,14 +88,16 @@ async function applyMyLeave(req, res) {
     const {
       from_date,
       to_date,
-      reason
+      reason,
+      leave_period
     } = req.body;
 
     const result = await leaveService.applyMyLeave({
       userId,
       fromDate: from_date,
       toDate: to_date,
-      reason
+      reason,
+      leavePeriod: leave_period
     });
 
     return res.status(201).json(result);
@@ -106,6 +108,7 @@ async function applyMyLeave(req, res) {
     if (
       error.code === "INVALID_DATE_RANGE" ||
       error.code === "INVALID_REASON" ||
+      error.code === "INVALID_LEAVE_PERIOD" ||
       error.code === "NO_LEAVE_DAYS"
     ) {
       return res.status(400).json({

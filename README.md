@@ -1,5 +1,46 @@
 # nandgate-human-resource-backend
 
+## Short-notice and half-day leave
+
+Apply the `add_leave_period` migration before using this feature. Employees
+submit leave through `POST /api/v1/leave/me/apply` with `from_date`, `to_date`,
+and `reason`. An optional `leave_period` defaults to `FULL_DAY`; use `MORNING`
+or `AFTERNOON` for a half-day on a single working date:
+
+```json
+{
+  "from_date": "2026-11-25",
+  "to_date": "2026-11-25",
+  "leave_period": "MORNING",
+  "reason": "Emergency appointment"
+}
+```
+
+Half-day requests reserve and consume 0.5 leave day and count as 0.5 toward
+the monthly limit. Requests for the same date cannot overlap. Approval still
+requires an admin decision and existing balance, holiday and payroll-lock
+checks apply. The selected period is informational: applications do not
+require punches, and the normal late-arrival rule remains in effect.
+On approval, attendance uses actual punches: at least the configured
+`half_day_hours` results in `HALF_DAY` with zero LOP, fewer hours in `ABSENT`
+with 1 LOP, and incomplete punches in `INSUFFICIENT` with 0.5 LOP and a
+regularization flag. Future dates without a summary are calculated when
+attendance is processed, not as an advance absence. Attendance totals include
+0.5 leave for a processed half-day alongside its worked/absent status.
+
+All active admins receive a `LEAVE_REQUEST` notification with employee,
+dates, period and duration. If the leave starts today or tomorrow in
+`TIMEZONE` (default `Asia/Kolkata`), `data.priority` is `HIGH` and the title
+is "Priority Leave Request"; otherwise it is `NORMAL`. Unread high-priority
+notifications appear first in the existing notification list and pending push
+jobs are prioritized. Push delivery still depends on registered device tokens
+and the notification worker. Reading a notification does not approve or
+reject a leave request.
+
+Run the integration test with
+`TEST_DATABASE_URL=postgresql://... node --test tests/shortNoticeLeave.test.js`.
+It creates and removes a uniquely named schema in the supplied test database.
+
 ## Employee-specific workday swaps
 
 An administrator can assign selected active employees a shutdown workday and a

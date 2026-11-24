@@ -59,12 +59,15 @@ async function claimPendingJobs() {
       });
 
     // Lock available jobs
-    const jobs = await trx("notification_push_jobs")
-      .select("id")
-      .where("status", "PENDING")
-      .where("next_attempt_at", "<=", now)
-      .orderBy("created_at", "asc")
-      .forUpdate()
+    const jobs = await trx("notification_push_jobs as jobs")
+      .join("notifications as n", "n.id", "jobs.notification_id")
+      .select("jobs.id")
+      .where("jobs.status", "PENDING")
+      .where("jobs.next_attempt_at", "<=", now)
+      .orderByRaw("CASE WHEN n.data->>'priority' = 'HIGH' THEN 0 ELSE 1 END")
+      .orderBy("jobs.created_at", "asc")
+      .orderBy("jobs.id", "asc")
+      .forUpdate("jobs")
       .skipLocked()
       .limit(BATCH_SIZE);
 
@@ -84,7 +87,10 @@ async function claimPendingJobs() {
       })
       .returning(["id", "attempts"]);
 
-    return claimedJobs;
+    const claimedById = new Map(
+      claimedJobs.map((job) => [String(job.id), job])
+    );
+    return jobs.map((job) => claimedById.get(String(job.id)));
   });
 }
 

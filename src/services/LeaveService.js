@@ -1,6 +1,7 @@
 const knex = require("../config/database");
 const { applyHolidayEmployeeScope } = require("../utils/holidayUtils");
 const formatDateOnly = require("../utils/dateHelpers").formatDateOnly;
+const { isShortNotice } = require("../utils/leaveNotification");
 
 const MONTHLY_LEAVE_LIMIT = 3;
 const APP_TIMEZONE = process.env.TIMEZONE || "Asia/Kolkata";
@@ -126,6 +127,7 @@ async function getMonthlyLeaveUsage(trx, userId, {
   const query = trx("leave_requests")
     .select(
       "id",
+      "leave_period",
       trx.raw("from_date::text AS from_date"),
       trx.raw("to_date::text AS to_date")
     )
@@ -156,6 +158,12 @@ async function getMonthlyLeaveUsage(trx, userId, {
       weeklyOffDays,
       holidays.map((item) => item.holiday_date)
     );
+
+    if (request.leave_period !== "FULL_DAY") {
+      for (const month of Object.keys(breakdown)) {
+        breakdown[month] *= 0.5;
+      }
+    }
 
     for (const [month, days] of Object.entries(breakdown)) {
       usage[month] = (usage[month] || 0) + days;
@@ -273,6 +281,16 @@ async function getMyLeaveBalance({ userId }) {
     .where("work_date", "<", endDate)
     .first();
 
+  const halfDayConsumed = await knex("leave_requests")
+    .sum({ days: "days" })
+    .where({ user_id: userId, status: "APPROVED" })
+    .whereIn("leave_period", ["MORNING", "AFTERNOON"])
+    .where("from_date", ">=", startDate)
+    .where("from_date", "<", endDate)
+    .first();
+  const consumedDays = Number(consumed?.days ?? 0) +
+    Number(halfDayConsumed?.days ?? 0);
+
   const pending = await knex("leave_requests")
     .sum({ days: "days" })
     .where({ user_id: userId, status: "PENDING" })
@@ -285,10 +303,10 @@ async function getMyLeaveBalance({ userId }) {
     data: {
       available_balance: balance - pendingDays,
       total_balance: balance,
-      consumed_this_month: Number(consumed?.days ?? 0),
+      consumed_this_month: consumedDays,
       pending_days: pendingDays,
       monthly_leave_limit: MONTHLY_LEAVE_LIMIT,
-      monthly_leave_used: Number(consumed?.days ?? 0)
+      monthly_leave_used: consumedDays
     }
   };
 }
@@ -491,7 +509,8 @@ async function applyMyLeave({
   userId,
   fromDate,
   toDate,
-  reason
+  reason,
+  leavePeriod = "FULL_DAY"
 }) {
   // BASIC VALIDATION
  
@@ -521,6 +540,17 @@ async function applyMyLeave({
   ) {
     const error = new Error("Invalid date format");
     error.code = "INVALID_DATE_RANGE";
+    throw error;
+  }
+
+  if (!["FULL_DAY", "MORNING", "AFTERNOON"].includes(leavePeriod)) {
+    const error = new Error("leave_period must be FULL_DAY, MORNING, or AFTERNOON");
+    error.code = "INVALID_LEAVE_PERIOD";
+    throw error;
+  }
+  if (leavePeriod !== "FULL_DAY" && normalizedFromDate !== normalizedToDate) {
+    const error = new Error("Half-day leave must be for a single date");
+    error.code = "INVALID_LEAVE_PERIOD";
     throw error;
   }
 
@@ -619,6 +649,10 @@ async function applyMyLeave({
     throw error;
   }
 
+  if (leavePeriod !== "FULL_DAY") {
+    days = 0.5;
+  }
+
   
   // MONTHLY BREAKDOWN
   
@@ -629,6 +663,11 @@ async function applyMyLeave({
     weeklyOffDays,
     [...holidaySet]
   );
+  if (leavePeriod !== "FULL_DAY") {
+    for (const month of Object.keys(requestedBreakdown)) {
+      requestedBreakdown[month] *= 0.5;
+    }
+  }
 
   const isRetroactive =
     normalizedFromDate < getLocalDateString();
@@ -756,6 +795,7 @@ async function applyMyLeave({
           from_date: normalizedFromDate,
           to_date: normalizedToDate,
           days,
+          leave_period: leavePeriod,
           reason: String(reason).trim(),
           is_retroactive: isRetroactive,
           status: "PENDING"
@@ -766,6 +806,7 @@ async function applyMyLeave({
           "from_date",
           "to_date",
           "days",
+          "leave_period",
           "reason",
           "is_retroactive",
           "status",
@@ -776,12 +817,17 @@ async function applyMyLeave({
       // NOTIFY ADMINS
       
 
+      const today = getLocalDateString();
+      const isPriority = isShortNotice(normalizedFromDate, today);
+      const periodDescription = leavePeriod === "FULL_DAY"
+        ? `${days} day(s)`
+        : `${leavePeriod.toLowerCase()} half-day`;
       await notifyAdmins(trx, {
         actorId: userId,
         type: "LEAVE_REQUEST",
-        title: "New Leave Request",
+        title: isPriority ? "Priority Leave Request" : "New Leave Request",
         message:
-          `${employee.name || "An employee"} submitted a leave request for ${days} day(s).`,
+          `${employee.name || "An employee"} requested ${periodDescription} leave from ${normalizedFromDate} to ${normalizedToDate}.`,
         entityType: "leave_request",
         entityId: request.id,
         data: {
@@ -790,7 +836,9 @@ async function applyMyLeave({
           emp_code: employee.emp_code || null,
           from_date: normalizedFromDate,
           to_date: normalizedToDate,
-          days
+          days,
+          leave_period: leavePeriod,
+          priority: isPriority ? "HIGH" : "NORMAL"
         }
       });
 
@@ -887,6 +935,7 @@ async function cancelMyLeave({
       "from_date",
       "to_date",
       "days",
+      "leave_period",
       "reason",
       "is_retroactive",
       "status",
@@ -991,6 +1040,7 @@ async function getMyLeaveRequests({
       knex.raw("from_date::text AS from_date"),
       knex.raw("to_date::text AS to_date"),
       "days",
+      "leave_period",
       "reason",
       "is_retroactive",
       "status",
@@ -1088,6 +1138,7 @@ async function getAdminLeaveRequests({
       "lr.from_date",
       "lr.to_date",
       "lr.days",
+      "lr.leave_period",
       "lr.reason",
       "lr.is_retroactive",
       "lr.status",
@@ -1281,6 +1332,11 @@ async function decideAdminLeave({
         weeklyOffDays,
         holidays.map((holiday) => holiday.holiday_date)
       );
+      if (leaveRequest.leave_period !== "FULL_DAY") {
+        for (const month of Object.keys(requestedBreakdown)) {
+          requestedBreakdown[month] *= 0.5;
+        }
+      }
 
       const monthlyUsage = await getMonthlyLeaveUsage(
         trx,
@@ -1346,6 +1402,7 @@ async function decideAdminLeave({
           "from_date",
           "to_date",
           "days",
+          "leave_period",
           "reason",
           "is_retroactive",
           "status",
@@ -1386,7 +1443,15 @@ async function decideAdminLeave({
         const isWeeklyOff = weeklyOffDays.includes(dayOfWeek);
         const isHoliday = holidaySet.has(dateString);
 
-        if (!isWeeklyOff && !isHoliday) {
+        if (!isWeeklyOff && !isHoliday && leaveRequest.leave_period !== "FULL_DAY") {
+          const existingSummary = await trx("day_summaries")
+            .where({ user_id: leaveRequest.user_id, work_date: dateString })
+            .first("id");
+          if (existingSummary || dateString < getLocalDateString()) {
+            const { recomputeDay } = require("./AttendanceService");
+            await recomputeDay(leaveRequest.user_id, dateString, trx);
+          }
+        } else if (!isWeeklyOff && !isHoliday) {
           const summary = await trx("day_summaries")
             .where({
               user_id: leaveRequest.user_id,
@@ -1468,6 +1533,7 @@ async function decideAdminLeave({
           from_date: fromDate,
           to_date: toDate,
           days: requestedDays,
+          leave_period: leaveRequest.leave_period,
           decision_note: String(note).trim()
         }
       });
@@ -1497,6 +1563,7 @@ async function decideAdminLeave({
         "from_date",
         "to_date",
         "days",
+        "leave_period",
         "reason",
         "is_retroactive",
         "status",
@@ -1540,6 +1607,7 @@ async function decideAdminLeave({
         from_date: fromDate,
         to_date: toDate,
         days: Number(leaveRequest.days),
+        leave_period: leaveRequest.leave_period,
         decision_note: String(note).trim()
       }
     });

@@ -88,6 +88,7 @@ async function buildEmployeeCalendar({
           knex.raw("from_date::text AS from_date"),
           knex.raw("to_date::text AS to_date"),
           "days",
+          "leave_period",
           "status"
         )
         .where({ user_id: userId })
@@ -137,6 +138,7 @@ async function buildEmployeeCalendar({
       from_date: request.from_date,
       to_date: request.to_date,
       days: Number(request.days),
+      leave_period: request.leave_period,
       status: request.status,
     })),
     ...workdaySwaps.flatMap((swap) => [

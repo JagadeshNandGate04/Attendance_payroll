@@ -56,7 +56,9 @@ async function getNotifications({
         "read_at",
         "created_at"
       )
+      .orderByRaw("CASE WHEN is_read = false AND data->>'priority' = 'HIGH' THEN 0 ELSE 1 END")
       .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
       .limit(limitNumber)
       .offset(offset),
 

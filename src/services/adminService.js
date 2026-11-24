@@ -499,6 +499,7 @@ async function getAdminDashboard({ period = "week" } = {}) {
     const leaveEmployees = await knex("leave_requests")
       .select("user_id")
       .where("status", "APPROVED")
+      .where("leave_period", "FULL_DAY")
       .where("from_date", "<=", today)
       .where("to_date", ">=", today);
 
@@ -817,6 +818,7 @@ async function getAdminRequestsInbox() {
       "lr.from_date",
       "lr.to_date",
       "lr.days",
+      "lr.leave_period",
       "lr.reason",
       "lr.is_retroactive",
 
@@ -899,6 +901,8 @@ async function getAdminRequestsInbox() {
     to_date: request.to_date,
 
     days: request.days,
+
+    leave_period: request.leave_period,
 
     start_time: null,
 
