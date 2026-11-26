@@ -166,6 +166,14 @@ It creates and removes a uniquely named schema in the supplied test database.
 
 ## Uninformed attendance and rejected leave
 
+The employee monthly attendance response includes a `punches` array for each
+displayed day, combining raw punches and non-voided corrections using the same
+duplicate filtering as the daily attendance endpoint. These are current punch
+records; the day's status, work hours, LOP and monthly totals still come from
+the saved attendance summary. In particular, adding punches directly to the
+database does not recalculate finalized payroll or locked summaries. Use the
+admin correction workflow for unlocked attendance instead of direct inserts.
+
 The attendance worker runs on server startup and at five minutes past each hour
 in `TIMEZONE` (default `Asia/Kolkata`). It checks completed dates in the current
 month, starting no earlier than each active employee's joining date. Missing

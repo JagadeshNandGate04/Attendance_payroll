@@ -161,6 +161,47 @@ test("completed attendance, rejected leave and payroll integration", {
     assert.equal(await db.transaction((trx) => ensureCompletedAttendance({
       trx, userId: employee.id, year, month
     })), 0);
+
+    await db("payroll_runs").where({ id: runId }).update({ status: "FINALIZED" });
+    const lockedBefore = await db("day_summaries")
+      .where({ user_id: employee.id, work_date: date(24) }).first();
+    const punchStart = getLocalDayBounds(date(24)).start;
+    await db("raw_punches").insert([
+      { emp_code: employee.emp_code, punched_at: punchStart, direction: "IN" },
+      { emp_code: employee.emp_code, punched_at: new Date(punchStart.getTime() + 60000), direction: "IN" },
+      { emp_code: admin.emp_code, punched_at: punchStart, direction: "IN" },
+    ]);
+    await db("correction_punches").insert([
+      { user_id: employee.id, punched_at: new Date(punchStart.getTime() + 8 * 3600000), direction: "OUT", source: "ADMIN_MANUAL", created_by: admin.id, reason: "Test" },
+      { user_id: employee.id, punched_at: new Date(punchStart.getTime() + 9 * 3600000), direction: "IN", source: "ADMIN_MANUAL", created_by: admin.id, reason: "Voided", is_voided: true },
+    ]);
+    const employeeMonth = await attendance.getMyAttendance({ userId: employee.id, month, year });
+    const day = employeeMonth.data.day_summaries.find((item) => item.work_date === date(24));
+    assert.deepEqual(day.punches.map((punch) => [punch.direction, punch.source_type]), [
+      ["IN", "RAW"], ["OUT", "CORRECTION"]
+    ]);
+    assert.equal(day.status, lockedBefore.status);
+    assert.equal(day.lop_value, 0.5);
+    assert.deepEqual(await db("day_summaries")
+      .where({ user_id: employee.id, work_date: date(24) }).first(), lockedBefore);
+    const employeeDayDetail = await attendance.getMyAttendanceDay({ userId: employee.id, date: date(24) });
+    assert.deepEqual(day.punches, employeeDayDetail.data.punches);
+
+    const todayBounds = getLocalDayBounds(today);
+    await db("raw_punches").insert([
+      { emp_code: employee.emp_code, punched_at: todayBounds.start, direction: "IN" },
+      { emp_code: employee.emp_code, punched_at: todayBounds.end, direction: "IN" },
+    ]);
+    const currentAttendance = await attendance.getMyAttendance({
+      userId: employee.id, month: currentMonth, year: currentYear,
+    });
+    const todaySummary = currentAttendance.data.day_summaries.find((item) => item.work_date === today);
+    assert.equal(todaySummary.punches.length, 1);
+    assert.equal(todaySummary.punches[0].direction, "IN");
+    assert.equal(todaySummary.is_pending, true);
+    assert.equal(currentAttendance.data.today.status, "IN");
+    assert.equal(currentAttendance.data.today.last_punch.id, todaySummary.punches[0].id);
+    assert.equal(currentAttendance.data.day_summaries.at(-1).work_date, today);
   } finally {
     if (db) await db.destroy();
     await adminDb.raw("DROP SCHEMA IF EXISTS ?? CASCADE", [schema]);

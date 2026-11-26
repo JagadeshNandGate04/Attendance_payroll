@@ -464,7 +464,10 @@ async function getPunchesForDate(
   trx = knex
 ) {
   const { start, end } = getLocalDayBounds(date);
+  return getPunchesForRange(user, start, end, trx);
+}
 
+async function getPunchesForRange(user, start, end, trx = knex) {
   const rawPunches = await trx("raw_punches")
     .select(
       "id",
@@ -1085,6 +1088,23 @@ async function getMyAttendance({
     halfDayLeaves.map((leave) => [leave.from_date, leave.leave_period])
   );
 
+  const punchesByDate = new Map();
+  if (startDate <= finalDisplayDate) {
+    const start = getLocalDayBounds(startDate).start;
+    const end = getLocalDayBounds(finalDisplayDate).end;
+    const punches = await getPunchesForRange(employee, start, end);
+    for (const punch of punches) {
+      const date = getLocalDateString(new Date(punch.punched_at));
+      if (!punchesByDate.has(date)) punchesByDate.set(date, []);
+      punchesByDate.get(date).push(punch);
+    }
+
+    const duplicateWindow = await getNumberSetting("duplicate_punch_window_min", 3);
+    for (const [date, dayPunches] of punchesByDate) {
+      punchesByDate.set(date, removeDuplicatePunches(dayPunches, duplicateWindow));
+    }
+  }
+
   // =====================================================
   // 8. FORMAT ATTENDANCE BY DATE
   // =====================================================
@@ -1123,9 +1143,10 @@ async function getMyAttendance({
       }
 
       const savedSummary = summaryMap.get(workDate);
+      const punches = punchesByDate.get(workDate) || [];
 
       if (savedSummary) {
-        formattedDaySummaries.push(savedSummary);
+        formattedDaySummaries.push({ ...savedSummary, punches });
       } else {
         // Today's attendance may not have a summary yet.
         // Display it as pending without saving ABSENT.
@@ -1147,6 +1168,7 @@ async function getMyAttendance({
           leave_period: halfDayLeaveByDate.get(workDate) || null,
           is_locked: false,
           is_pending: true,
+          punches,
         });
       }
 
@@ -1267,20 +1289,7 @@ async function getMyAttendance({
   let firstPunchIn = null;
 
   if (today >= startDate && today < endExclusive) {
-    const punches = await getPunchesForDate(
-      employee,
-      today
-    );
-
-    const duplicateWindow = await getNumberSetting(
-      "duplicate_punch_window_min",
-      3
-    );
-
-    const validPunches = removeDuplicatePunches(
-      punches,
-      duplicateWindow
-    );
+    const validPunches = punchesByDate.get(today) || [];
 
     lastPunch = validPunches.length
       ? validPunches[validPunches.length - 1]
