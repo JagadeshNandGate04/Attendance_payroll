@@ -48,6 +48,18 @@ router.post(
 // ADMIN EMPLOYEE PROFILE APPROVAL ROUTES
 // =====================================================
 
+router.get(
+  "/admin/employees/:userId",
+  adminAuthorize(),
+  employeeProfileController.getAdminEmployeeProfile
+);
+
+router.get(
+  "/admin/employees/:userId/profile-picture",
+  adminAuthorize(),
+  employeeProfileController.getAdminEmployeeProfilePicture
+);
+
 // GET PROFILE CHANGE REQUESTS
 router.get(
   "/admin/requests",
@@ -299,6 +311,19 @@ router.patch(
   "/admin/requests/:id/statutory/reject",
   adminAuthorize(),
   employeeProfileController.rejectStatutoryDetailsRequest
+);
+
+
+// =====================================================
+// BANK DETAILS
+// =====================================================
+
+// GET MY BANK DETAILS
+
+router.get(
+  "/me/bank-details",
+  userAuthorize(),
+  employeeProfileController.getMyBankDetails
 );
 
 // SUBMIT BANK DETAILS

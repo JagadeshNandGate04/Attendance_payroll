@@ -197,6 +197,58 @@ async function submitPersonalDetailsRequest(req, res) {
 // ADMIN: LIST PROFILE CHANGE REQUESTS
 // =====================================================
 
+async function getAdminEmployeeProfile(req, res) {
+  try {
+    const result = await employeeProfileService.getAdminEmployeeProfile({
+      userId: req.params.userId,
+      page: req.query.page ?? 1,
+      limit: req.query.limit ?? 20,
+    });
+    res.set("Cache-Control", "private, no-store");
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error("Admin employee profile error:", error);
+    if (["INVALID_EMPLOYEE_ID", "INVALID_PAGINATION", "INVALID_USER_ID"].includes(error.code)) {
+      return res.status(400).json({ success: false, error: error.code, message: error.message });
+    }
+    if (["EMPLOYEE_NOT_FOUND", "PROFILE_NOT_FOUND"].includes(error.code)) {
+      return res.status(404).json({ success: false, error: error.code, message: error.message });
+    }
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching employee profile",
+    });
+  }
+}
+
+async function getAdminEmployeeProfilePicture(req, res) {
+  try {
+    const result = await employeeProfileService.getAdminEmployeeProfilePicture({
+      userId: req.params.userId,
+    });
+    res.set({
+      "Content-Type": result.mimeType,
+      "Content-Length": String(result.sizeBytes),
+      "Content-Disposition": 'inline; filename="profile-picture"',
+      "Cache-Control": "private, no-store, max-age=0",
+      "X-Content-Type-Options": "nosniff",
+    });
+    return res.status(200).send(result.buffer);
+  } catch (error) {
+    console.error("Admin employee profile picture error:", error);
+    if (error.code === "INVALID_EMPLOYEE_ID") {
+      return res.status(400).json({ success: false, error: error.code, message: error.message });
+    }
+    if (["EMPLOYEE_NOT_FOUND", "PROFILE_NOT_FOUND", "PROFILE_PICTURE_NOT_FOUND", "PROFILE_PICTURE_FILE_NOT_FOUND"].includes(error.code)) {
+      return res.status(404).json({ success: false, error: error.code, message: error.message });
+    }
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching profile picture",
+    });
+  }
+}
+
 async function getAdminProfileChangeRequests(req, res) {
   try {
     const result =
@@ -1593,6 +1645,32 @@ async function rejectStatutoryDetailsRequest(req, res) {
   }
 }
 
+// GET MY BANK DETAILS
+
+async function getMyBankDetails(req, res) {
+  try {
+    const result = await employeeProfileService.getMyBankDetails({
+      userId: req.user.id,
+    });
+
+    res.set("Cache-Control", "no-store");
+    return res.status(200).json({
+      success: true,
+      message: "Bank details fetched successfully",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Get bank details error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "BANK_DETAILS_FETCH_FAILED",
+      message: "Unable to fetch bank details",
+      data: null,
+    });
+  }
+}
+
 // SUBMIT BANK DETAILS REQUEST:
 
 async function submitBankDetailsRequest(req, res) {
@@ -1681,6 +1759,8 @@ module.exports = {
   getMyProfilePicture,
   submitPersonalDetailsRequest,
   getAdminProfileChangeRequests,
+  getAdminEmployeeProfile,
+  getAdminEmployeeProfilePicture,
   getAdminProfileChangeRequestById,
   approvePersonalDetailsRequest,
   rejectPersonalDetailsRequest,
@@ -1712,6 +1792,7 @@ module.exports = {
    submitStatutoryDetailsRequest,
   approveStatutoryDetailsRequest,
   rejectStatutoryDetailsRequest,
+  getMyBankDetails,
   submitBankDetailsRequest,
   approveBankDetailsRequest,
   rejectBankDetailsRequest,

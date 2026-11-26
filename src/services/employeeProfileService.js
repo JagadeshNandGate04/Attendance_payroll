@@ -42,6 +42,23 @@ function sanitizeSensitiveData(value) {
   return value;
 }
 
+function maskBankDetails(bankDetails) {
+  if (!bankDetails) return null;
+
+  return {
+    id: bankDetails.id,
+    bank_name: bankDetails.bank_name,
+    branch_name: bankDetails.branch_name,
+    account_number_available: Boolean(bankDetails.account_number_encrypted),
+    account_number: bankDetails.account_number_encrypted
+      ? maskIdentityValue(decryptValue(bankDetails.account_number_encrypted))
+      : null,
+    ifsc_code: bankDetails.ifsc_code,
+    created_at: bankDetails.created_at,
+    updated_at: bankDetails.updated_at,
+  };
+}
+
 
 
 // =====================================================
@@ -980,33 +997,7 @@ async function getMyEmployeeProfile({ userId }) {
   // MASK BANK DETAILS
   // =====================================================
 
-  const maskedBankDetails = bankDetails
-    ? {
-        id: bankDetails.id,
-
-        bank_name: bankDetails.bank_name,
-
-        branch_name: bankDetails.branch_name,
-
-        account_number_available: Boolean(
-          bankDetails.account_number_encrypted
-        ),
-
-        account_number: bankDetails.account_number_encrypted
-          ? maskIdentityValue(
-              decryptValue(
-                bankDetails.account_number_encrypted
-              )
-            )
-          : null,
-
-        ifsc_code: bankDetails.ifsc_code,
-
-        created_at: bankDetails.created_at,
-
-        updated_at: bankDetails.updated_at,
-      }
-    : null;
+  const maskedBankDetails = maskBankDetails(bankDetails);
 
   // =====================================================
   // PREPARE EMPLOYEE RESPONSE
@@ -1912,6 +1903,53 @@ async function getAdminProfileChangeRequests({
 }
 
 
+
+// =====================================================
+// ADMIN: GET EMPLOYEE PROFILE AND REQUEST HISTORY
+// =====================================================
+
+function validateAdminEmployeeId(userId) {
+  if (!/^[1-9]\d*$/.test(String(userId)) || !Number.isSafeInteger(Number(userId))) {
+    throw createProfileError("INVALID_EMPLOYEE_ID", "Invalid employee ID");
+  }
+}
+
+async function getAdminEmployeeProfile({ userId, page = 1, limit = 20 }) {
+  validateAdminEmployeeId(userId);
+  const profile = await getMyEmployeeProfile({ userId });
+  const history = await getAdminProfileChangeRequests({
+    user_id: userId,
+    status: "ALL",
+    page,
+    limit,
+  });
+
+  if (profile.data.profile.profile_picture.available) {
+    profile.data.profile.profile_picture.url =
+      `/api/v1/employee-profile/admin/employees/${Number(userId)}/profile-picture`;
+  }
+
+  return {
+    ...profile,
+    data: {
+      ...profile.data,
+      requests: history.data.requests,
+      requests_pagination: history.data.pagination,
+    },
+  };
+}
+
+async function getAdminEmployeeProfilePicture({ userId }) {
+  validateAdminEmployeeId(userId);
+  const employee = await knex("users")
+    .where({ id: userId })
+    .first("role");
+  if (!employee || String(employee.role).toUpperCase() !== "EMPLOYEE") {
+    throw createProfileError("EMPLOYEE_NOT_FOUND", "Employee not found");
+  }
+
+  return getMyProfilePicture({ userId });
+}
 
 // =====================================================
 // ADMIN: GET EMPLOYEE PROFILE CHANGE REQUEST DETAIL
@@ -3738,7 +3776,16 @@ async function submitFamilyMemberRequest({
           status: "ACTIVE",
         })
         .forUpdate()
-        .first();
+        .first(
+          "name",
+          "relation",
+          "gender",
+          trx.raw("to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth"),
+          "profession",
+          "family_member_type",
+          "address",
+          "remarks"
+        );
 
       if (!existingMember) {
         throw createFamilyMemberError(
@@ -3751,9 +3798,7 @@ async function submitFamilyMemberRequest({
         name: existingMember.name,
         relation: existingMember.relation,
         gender: existingMember.gender,
-        date_of_birth: existingMember.date_of_birth
-          ? String(existingMember.date_of_birth).slice(0, 10)
-          : null,
+        date_of_birth: existingMember.date_of_birth,
         profession: existingMember.profession,
         family_member_type: existingMember.family_member_type,
         address: existingMember.address,
@@ -6931,6 +6976,26 @@ async function rejectStatutoryDetailsRequest({
 
 
 // =====================================================
+// GET MY BANK DETAILS
+// =====================================================
+
+async function getMyBankDetails({ userId }) {
+  const bankDetails = await knex("employee_bank_details")
+    .where({ user_id: userId })
+    .first(
+      "id",
+      "bank_name",
+      "branch_name",
+      "account_number_encrypted",
+      "ifsc_code",
+      "created_at",
+      "updated_at"
+    );
+
+  return { bank_details: maskBankDetails(bankDetails) };
+}
+
+// =====================================================
 // SUBMIT BANK DETAILS REQUEST
 // =====================================================
 
@@ -7509,6 +7574,8 @@ module.exports = {
   getMyProfilePicture,
   submitPersonalDetailsRequest,
   getAdminProfileChangeRequests,
+  getAdminEmployeeProfile,
+  getAdminEmployeeProfilePicture,
   approvePersonalDetailsRequest,
   rejectPersonalDetailsRequest,
   getAdminProfileChangeRequestById,
@@ -7550,6 +7617,7 @@ module.exports = {
   approveStatutoryDetailsRequest,
   rejectStatutoryDetailsRequest,
 
+  getMyBankDetails,
   submitBankDetailsRequest,
   approveBankDetailsRequest,
   rejectBankDetailsRequest,

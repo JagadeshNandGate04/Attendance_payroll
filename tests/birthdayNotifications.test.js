@@ -133,6 +133,23 @@ test("birthday profile synchronization and notifications", {
       String(n.entity_id) === String(birthday.id)).type, "BIRTHDAY_WISH");
     assert.equal(all.find((n) => String(n.user_id) === String(birthday.id) &&
       String(n.entity_id) === String(leap.id)).type, "EMPLOYEE_BIRTHDAY");
+    const employeeServer = await new Promise((resolve) => {
+      const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+    });
+    try {
+      const url = `http://127.0.0.1:${employeeServer.address().port}/api/v1/notifications/me/get-notifications`;
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token(coworker.id)}` }
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      const birthdayNotifications = body.data.notifications.filter((n) => n.type === "EMPLOYEE_BIRTHDAY");
+      assert.deepEqual(new Set(birthdayNotifications.map((n) => String(n.entity_id))),
+        new Set([String(birthday.id), String(leap.id)]));
+      assert.ok(birthdayNotifications.every((n) => !n.is_read && n.expires_on === date));
+    } finally {
+      await new Promise((resolve, reject) => employeeServer.close((error) => error ? reject(error) : resolve()));
+    }
     assert.equal(all[0].data.birthday_date, date);
     assert.equal(all[0].data.expires_on, date);
     assert.equal(Object.hasOwn(all[0].data, "date_of_birth"), false);

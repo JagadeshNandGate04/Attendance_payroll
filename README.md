@@ -1,5 +1,54 @@
 # nandgate-human-resource-backend
 
+## Admin employee profile lookup
+
+Admins can call `GET /api/v1/employee-profile/admin/employees/:userId` using
+the employee's user ID. The response includes the approved profile and its
+sections, pending requests, and a `requests` array containing profile-change
+requests of every status. Request history is paginated: use `?page=1&limit=20`
+(defaults; limit is 1–100), and check `requests_pagination` for the total and
+number of pages. Leave and attendance requests are not included.
+
+Sensitive identity and bank details are masked; sensitive values in request
+snapshots are redacted. When a profile picture exists, its URL uses the
+admin-only profile-picture endpoint and requires admin authentication. An invalid
+ID returns 400; a missing employee or profile returns 404.
+
+Run the integration test with an isolated PostgreSQL database:
+`TEST_DATABASE_URL=postgresql://... node --test tests/adminEmployeeProfile.test.js`.
+
+## Employee bank details
+
+Authenticated employees can call `GET /api/v1/employee-profile/me/bank-details`
+to retrieve their own approved bank details. The response has
+`data.bank_details: null` if no approved record exists. Otherwise it includes
+the record ID, bank and branch names, IFSC code, timestamps,
+`account_number_available`, and a masked `account_number` showing only its
+last four digits. Pending requests do not change these details until approved.
+
+Run the integration test with an isolated PostgreSQL database:
+`TEST_DATABASE_URL=postgresql://... node --test tests/bankDetails.test.js`.
+
+## Family member updates
+
+Submit an update to `POST /api/v1/employee-profile/me/family-members/request`
+with `request_type`, the family member `id`, and only the fields to change:
+
+```json
+{
+  "request_type": "UPDATE",
+  "id": "1",
+  "name": "Nagarajan M"
+}
+```
+
+Unspecified fields retain their approved values. If changing `date_of_birth`,
+use `YYYY-MM-DD` or `null` to clear it. Changes take effect after admin approval.
+
+Run the regression test with `node --test tests/familyMemberRequests.test.js`.
+Set `TEST_DATABASE_URL` to an isolated PostgreSQL database to also run its
+integration test.
+
 ## Employee birthday notifications
 
 Apply the `add_employee_birthdays` migration and restart the backend. The
