@@ -2,6 +2,7 @@ const knex = require("../config/database");
 const { applyHolidayEmployeeScope } = require("../utils/holidayUtils");
 const formatDateOnly = require("../utils/dateHelpers").formatDateOnly;
 const { isShortNotice } = require("../utils/leaveNotification");
+const { notifyAdmins } = require("../utils/notificationHelpers");
 
 const MONTHLY_LEAVE_LIMIT = 3;
 const APP_TIMEZONE = process.env.TIMEZONE || "Asia/Kolkata";
@@ -204,37 +205,6 @@ function validateMonthlyLeaveLimit(existingUsage, requestedBreakdown) {
 }
 
 // NOTIFICATION HELPERS
-
-// Notify all active Admin users
-async function notifyAdmins(trx, {
-  actorId,
-  type,
-  title,
-  message,
-  entityType,
-  entityId,
-  data = {}
-}) {
-  const admins = await trx("users")
-    .select("id")
-    .whereRaw("UPPER(role) = ?", ["ADMIN"])
-    .whereRaw("UPPER(status) = ?", ["ACTIVE"]);
-
-  if (!admins.length) return;
-
-  await trx("notifications").insert(
-    admins.map((admin) => ({
-      user_id: admin.id,
-      actor_id: actorId,
-      type,
-      title,
-      message,
-      entity_type: entityType,
-      entity_id: entityId,
-      data
-    }))
-  );
-}
 
 // Notify one specific employee
 async function notifyUser(trx, {

@@ -17,6 +17,8 @@ test("employee bank details endpoint returns only masked approved details", {
     db = knexFactory({ client: "pg", connection: process.env.TEST_DATABASE_URL, searchPath: [schema] });
     for (const migration of [
       "20260817104609_create_initial_schema",
+      "20261104064126_create_notifications",
+      "20261104092535_create_notification_push_jobs",
       "20261112043402_create_employee_sensitive_details",
       "20261112043402_create_employee_profile_approvals_and_documents",
     ]) await require(`../migrations/${migration}`).up(db);

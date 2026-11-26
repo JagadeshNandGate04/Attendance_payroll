@@ -118,6 +118,7 @@ test("birthday profile synchronization and notifications", {
     });
     assert.equal((await db("users").where({ id: coworker.id }).first()).date_of_birth, null);
 
+    await db("notifications").where({ type: "PROFILE_CHANGE_REQUEST" }).del();
     const date = "2027-02-28";
     t.mock.timers.enable({ apis: ["Date"], now: getLocalDayBounds(date).start.getTime() });
     const results = await Promise.all([processBirthdays(), processBirthdays()]);

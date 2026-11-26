@@ -8,6 +8,7 @@ const {
 const fs = require("fs").promises;
 const path = require("path");
 const crypto = require("crypto");
+const { notifyAdmins } = require("../utils/notificationHelpers");
 
 // =====================================================
 // HELPERS
@@ -57,6 +58,32 @@ function maskBankDetails(bankDetails) {
     created_at: bankDetails.created_at,
     updated_at: bankDetails.updated_at,
   };
+}
+
+async function notifyProfileRequest(trx, request, section = request.section) {
+  const employee = await trx("users")
+    .where({ id: request.user_id })
+    .first("id", "name", "emp_code");
+  if (!employee) {
+    throw createProfileError("EMPLOYEE_NOT_FOUND", "Employee not found");
+  }
+
+  await notifyAdmins(trx, {
+    actorId: employee.id,
+    type: "PROFILE_CHANGE_REQUEST",
+    title: "Employee profile change request",
+    message: `${employee.name} submitted a ${section.toLowerCase().replace(/_/g, " ")} profile request for approval.`,
+    entityType: "profile_change_request",
+    entityId: request.id,
+    data: {
+      request_id: request.id,
+      employee_id: employee.id,
+      employee_name: employee.name,
+      emp_code: employee.emp_code,
+      section,
+      request_type: request.request_type,
+    },
+  });
 }
 
 
@@ -1648,6 +1675,8 @@ async function submitPersonalDetailsRequest({
         "created_at",
       ]);
 
+    await notifyProfileRequest(trx, request);
+
     return {
       success: true,
       message: "Personal details submitted for admin approval",
@@ -2458,6 +2487,8 @@ async function submitAddressRequest({
         "created_at",
       ]);
 
+    await notifyProfileRequest(trx, request);
+
     return {
       success: true,
       message: "Address change request submitted successfully",
@@ -3137,6 +3168,7 @@ async function submitEmergencyContactRequest({
         "created_at",
       ]);
 
+    await notifyProfileRequest(trx, request);
     return { request };
   });
 }
@@ -3878,6 +3910,7 @@ async function submitFamilyMemberRequest({
         "created_at",
       ]);
 
+    await notifyProfileRequest(trx, request);
     return { request };
   });
 }
@@ -4552,6 +4585,8 @@ async function submitQualificationRequest({
       })
       .returning("*");
 
+    await notifyProfileRequest(trx, request);
+
     return {
       request,
       message: "Qualification change request submitted successfully.",
@@ -5156,6 +5191,7 @@ async function submitWorkExperienceRequest({
       })
       .returning("*");
 
+    await notifyProfileRequest(trx, request);
     await trx.commit();
 
     return request;
@@ -6030,6 +6066,8 @@ async function submitIdentityDetailsRequest({
         "created_at",
       ]);
 
+    await notifyProfileRequest(trx, request);
+
     return {
       request,
       message:
@@ -6703,6 +6741,8 @@ async function submitStatutoryDetailsRequest({
         "created_at",
       ]);
 
+    await notifyProfileRequest(trx, request);
+
     return {
       success: true,
       message: "Statutory details request submitted successfully",
@@ -7307,6 +7347,8 @@ async function submitBankDetailsRequest({
         "status",
         "created_at",
       ]);
+
+    await notifyProfileRequest(trx, request, "BANK");
 
     return {
       success: true,

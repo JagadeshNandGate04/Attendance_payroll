@@ -26,13 +26,16 @@ test("family member partial updates preserve the stored date through approval", 
     let operation;
     let values;
     const query = {
+      select() { return this; },
+      whereRaw() { return this; },
       where(data) { conditions = { ...conditions, ...data }; return this; },
       forUpdate() { return this; },
       first(...columns) {
         const matches = (row) => Object.entries(conditions)
           .every(([key, value]) => String(row[key]) === String(value));
         if (table === "users") {
-          return Promise.resolve(conditions.id === "10" ? { id: "10" } : undefined);
+          return Promise.resolve(conditions.id === "10"
+            ? { id: "10", name: "Employee", emp_code: "EMP" } : undefined);
         }
         if (table === "employee_family_members") {
           if (!matches(member)) return Promise.resolve(undefined);
@@ -65,6 +68,9 @@ test("family member partial updates preserve the stored date through approval", 
         throw new Error(`Unexpected returning operation: ${table} ${operation}`);
       },
       then(resolve, reject) {
+        if (table === "users" && !operation) {
+          return Promise.resolve([]).then(resolve, reject);
+        }
         if (table !== "employee_family_members" || operation !== "update") {
           return Promise.reject(new Error(`Unexpected query: ${table} ${operation}`))
             .then(resolve, reject);
@@ -169,6 +175,8 @@ test("family member partial update against PostgreSQL", {
     db = knexFactory({ client: "pg", connection: process.env.TEST_DATABASE_URL, searchPath: [schema] });
     for (const migration of [
       "20260817104609_create_initial_schema",
+      "20261104064126_create_notifications",
+      "20261104092535_create_notification_push_jobs",
       "20261112043402_create_employee_profile_details",
       "20261112043402_create_employee_profile_approvals_and_documents",
     ]) await require(`../migrations/${migration}`).up(db);

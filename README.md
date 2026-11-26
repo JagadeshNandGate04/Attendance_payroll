@@ -1,5 +1,19 @@
 # nandgate-human-resource-backend
 
+## Employee profile request notifications
+
+When an employee submits a personal, address, emergency contact, family member,
+qualification, work experience, identity, statutory or bank profile change
+request, each active admin receives a `PROFILE_CHANGE_REQUEST` notification.
+It appears in `GET /api/v1/notifications/admin/get-notifications` and contains
+the employee, request ID, section and request type, but not the submitted
+details. The request and notifications are saved together. Push delivery uses
+the existing notification push worker and registered devices. Existing requests
+are not backfilled.
+
+Run the integration test with an isolated PostgreSQL database:
+`TEST_DATABASE_URL=postgresql://... node --test tests/profileRequestNotifications.test.js`.
+
 ## Admin employee profile lookup
 
 Admins can call `GET /api/v1/employee-profile/admin/employees/:userId` using
